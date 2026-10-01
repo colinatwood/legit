@@ -83,6 +83,7 @@ async function purgeExpiredRecords(env){
   const now = new Date().toISOString();
   const abuseCutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
   await env.DB.prepare("DELETE FROM abuse_buckets WHERE bucket_start < ?").bind(abuseCutoff).run();
+  await env.DB.prepare("DELETE FROM moderator_verification_events WHERE expires_at < ?").bind(now).run();
   const expiredWhere = "review_state IN ('pending', 'flagged') AND retention_until IS NOT NULL AND retention_until < ?";
   const count = await env.DB.prepare(`SELECT COUNT(*) AS total FROM happenings WHERE ${expiredWhere}`).bind(now).first();
   const deletedHappenings = Number(count?.total || 0);

@@ -18,6 +18,8 @@ let map;
 let selectedHappening = null;
 let mapMarkers = [];
 let postCounter = 0;
+let publicLoadController = null;
+let publicLoadTimer = null;
 const refineFilters = {time:"today",legitimacy:"all",balance:"all",importance:"all"};
 const userState = {points:128};
 const accessibilityKey = "legit-accessibility";
@@ -65,13 +67,16 @@ function relativeTime(iso){
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 function mapServerHappening(item){
-  return {id:item.id,serverId:item.id,title:item.title,body:item.body,location:item.location,topic:item.topic,status:publicStatus(item.legitimacyScore),time:relativeTime(item.createdAt),ageMinutes:Math.max(0,Math.round((Date.now()-new Date(item.createdAt).getTime())/60000)),balance:item.balance || "agnostic",score:item.legitimacyScore || 0,impact:item.impact || 1,sourceCount:item.sourceCount || 0,checkers:0,reports:item.reports || 1,publicLat:item.publicLat,publicLng:item.publicLng,nearby:false,claim:{text:item.body,attribution:`Aggregated from ${item.reports || 1} approved local report${item.reports === 1 ? "" : "s"}.`},evidence:item.evidence || [],corrections:item.corrections || [],balanceBasis:"Perspective is calculated from the reported frames in the aggregated signal.",legitimacyBasis:item.legitimacyBasis || "Legitimacy reflects evidence alignment, not popularity.",saved:deskState.keys.has(item.id)};
+  return {id:item.id,serverId:item.id,title:item.title,body:item.body,location:item.location,topic:item.topic,status:publicStatus(item.legitimacyScore),time:relativeTime(item.createdAt),ageMinutes:Math.max(0,Math.round((Date.now()-new Date(item.createdAt).getTime())/60000)),balance:item.balance || "agnostic",score:item.legitimacyScore || 0,impact:item.impact || 1,reports:item.reports || 1,publicLat:item.publicLat,publicLng:item.publicLng,claim:{text:item.body,attribution:`Aggregated from ${item.reports || 1} approved local report${item.reports === 1 ? "" : "s"}.`},evidence:item.evidence || [],corrections:item.corrections || [],balanceBasis:"Perspective is calculated from the reported frames in the aggregated signal.",legitimacyBasis:item.legitimacyBasis || "Legitimacy reflects evidence alignment, not popularity.",saved:deskState.keys.has(item.id)};
 }
 async function loadPublicHappenings(){
   setDataStatus("Refreshing live map…","loading");
+  publicLoadController?.abort();
+  const controller = new AbortController();
+  publicLoadController = controller;
   try{
-    const response=await fetch(`/api/happenings?time=${encodeURIComponent(refineFilters.time)}`,{headers:{accept:"application/json"}});
-    if(!response.ok) return;
+    const response=await fetch(`/api/happenings?time=${encodeURIComponent(refineFilters.time)}`,{headers:{accept:"application/json"},signal:controller.signal});
+    if(!response.ok){ setDataStatus("Using last known map data","stale"); return; }
     const data=await response.json();
     const serverItems=(data.happenings || []).map(mapServerHappening);
     const serverIds=new Set(serverItems.map(item => item.serverId));
@@ -80,7 +85,8 @@ async function loadPublicHappenings(){
     applyDeskState();
     renderMarkers();
     setDataStatus(serverItems.length ? "Live · updated just now" : "Live · demo signals", "live");
-  }catch{ setDataStatus("Using last known map data","stale"); }
+  }catch(error){ if(error.name !== "AbortError") setDataStatus("Using last known map data","stale"); }
+  finally{ if(publicLoadController === controller) publicLoadController = null; }
 }
 function markerElement(item){
   const el=document.createElement("div"); el.className="map-marker"; el.setAttribute("aria-hidden","true"); el.style.setProperty("--balance-color",balanceColor(item.balance)); el.style.setProperty("--impact",item.impact);
@@ -266,7 +272,7 @@ document.querySelectorAll(".modal-backdrop").forEach(backdrop => backdrop.addEve
 document.querySelectorAll("#filterPanel select").forEach(select => select.addEventListener("change",event => { refineFilters[event.target.id.replace("Filter","")]=event.target.value; renderMarkers(); }));
 const timePresets=["Today","Yesterday","Last week","Last month","Last year","All time"];
 const timeValues=["today","yesterday","week","month","year","all"];
-function setTimePreset(index){ const safeIndex=Math.max(0,Math.min(timeValues.length-1,index)); refineFilters.time=timeValues[safeIndex]; document.getElementById("timeValue").textContent=timePresets[safeIndex]; document.getElementById("timeRange").setAttribute("aria-valuetext",timePresets[safeIndex]); renderMarkers(); loadPublicHappenings(); }
+function setTimePreset(index){ const safeIndex=Math.max(0,Math.min(timeValues.length-1,index)); refineFilters.time=timeValues[safeIndex]; document.getElementById("timeValue").textContent=timePresets[safeIndex]; document.getElementById("timeRange").setAttribute("aria-valuetext",timePresets[safeIndex]); renderMarkers(); window.clearTimeout(publicLoadTimer); publicLoadTimer=window.setTimeout(loadPublicHappenings,180); }
 document.getElementById("timeRange").addEventListener("input",event => setTimePreset(Number(event.target.value)));
 document.querySelectorAll("[data-action]").forEach(button => button.addEventListener("click",() => runAction(button.dataset.action)));
 document.getElementById("miniAdd").addEventListener("click",() => { if(selectedHappening) toggleDesk(selectedHappening); });
@@ -278,7 +284,7 @@ document.getElementById("detailReport").addEventListener("click",() => { if(sele
 document.getElementById("reportForm").addEventListener("submit",submitReport);
 document.getElementById("anonymousToggle").addEventListener("change",event => { document.getElementById("identityField").hidden=event.target.checked; if(event.target.checked) document.getElementById("postIdentity").value=""; });
 document.getElementById("locationPrivacy").addEventListener("change",event => { event.target.value="aggregate"; });
-document.getElementById("composerForm").addEventListener("submit",async event => { event.preventDefault(); const form=event.currentTarget; const title=document.getElementById("postTitle").value.trim(); const body=document.getElementById("postBody").value.trim(); const location=document.getElementById("postLocation").value.trim(); if(!title || !body || !location) return; const submit=form.querySelector('button[type="submit"]'); submit.disabled=true; submit.textContent="Queueing…"; const anonymous=document.getElementById("anonymousToggle").checked; const identity=anonymous ? "Anonymous" : (document.getElementById("postIdentity").value.trim() || "Contributor"); const baseLat=43.665+(Math.random()-.5)*.008; const baseLng=-70.26+(Math.random()-.5)*.012; try{ const response=await fetch("/api/happenings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({title,body,location,topic:document.getElementById("postTopic").value,lat:baseLat,lng:baseLng,locationPrecision:"aggregate",identityVisibility:anonymous ? "anonymous" : "attributed",displayIdentity:anonymous ? null : identity,source:document.getElementById("postSource").value.trim(),attachments:[]})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "The privacy gate could not queue this signal."); const item={id:100+postCounter++,serverId:data.happening?.id,title,body,location,topic:document.getElementById("postTopic").value,status:"Unverified",time:"just now",ageMinutes:0,balance:"agnostic",score:0,impact:1,sourceCount:0,checkers:0,reports:1,publicLat:data.happening?.publicLat ?? Math.round(baseLat*1000)/1000,publicLng:data.happening?.publicLng ?? Math.round(baseLng*1000)/1000,nearby:true,claim:{text:body,attribution:"Queued through the privacy and moderation gate."},evidence:[],balanceBasis:"No independent perspective comparison yet.",saved:false}; happenings.unshift(item); renderMarkers(); closeModal("composerModal"); resetComposer(); openMini(item); showToast("Signal queued — public display waits for review"); }catch(error){ showToast(error.message || "Signal could not be queued"); }finally{ submit.disabled=false; submit.textContent="Post signal"; } });
+document.getElementById("composerForm").addEventListener("submit",async event => { event.preventDefault(); const form=event.currentTarget; const title=document.getElementById("postTitle").value.trim(); const body=document.getElementById("postBody").value.trim(); const location=document.getElementById("postLocation").value.trim(); if(!title || !body || !location) return; const submit=form.querySelector('button[type="submit"]'); submit.disabled=true; submit.textContent="Queueing…"; const anonymous=document.getElementById("anonymousToggle").checked; const identity=anonymous ? "Anonymous" : (document.getElementById("postIdentity").value.trim() || "Contributor"); const baseLat=43.665+(Math.random()-.5)*.008; const baseLng=-70.26+(Math.random()-.5)*.012; try{ const response=await fetch("/api/happenings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({title,body,location,topic:document.getElementById("postTopic").value,lat:baseLat,lng:baseLng,identityVisibility:anonymous ? "anonymous" : "attributed",displayIdentity:anonymous ? null : identity,source:document.getElementById("postSource").value.trim(),attachments:[]})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "The privacy gate could not queue this signal."); const item={id:100+postCounter++,serverId:data.happening?.id,title,body,location,topic:document.getElementById("postTopic").value,status:"Unverified",time:"just now",ageMinutes:0,balance:"agnostic",score:0,impact:1,reports:1,publicLat:data.happening?.publicLat ?? Math.round(baseLat*1000)/1000,publicLng:data.happening?.publicLng ?? Math.round(baseLng*1000)/1000,claim:{text:body,attribution:"Queued through the privacy and moderation gate."},evidence:[],balanceBasis:"No independent perspective comparison yet.",saved:false}; happenings.unshift(item); renderMarkers(); closeModal("composerModal"); resetComposer(); openMini(item); showToast("Signal queued — public display waits for review"); }catch(error){ showToast(error.message || "Signal could not be queued"); }finally{ submit.disabled=false; submit.textContent="Post signal"; } });
 document.addEventListener("keydown",event => { const activeModal=document.querySelector(".modal-backdrop:not([hidden]), .access-panel:not([hidden])"); if(event.key === "Tab" && activeModal){ const focusables=[...activeModal.querySelectorAll("button,a[href],input,select,textarea,[tabindex]:not([tabindex='-1'])")].filter(element => !element.disabled); if(focusables.length){ const first=focusables[0]; const last=focusables[focusables.length-1]; if(event.shiftKey && document.activeElement === first){ event.preventDefault(); last.focus(); } else if(!event.shiftKey && document.activeElement === last){ event.preventDefault(); first.focus(); } } } if(event.key === "Escape"){ closeActions(); miniCard.hidden=true; document.getElementById("filterPanel").hidden=true; document.querySelectorAll(".modal-backdrop:not([hidden]), .access-panel:not([hidden])").forEach(modal => closeModal(modal.id)); document.getElementById("openAccessibility").setAttribute("aria-expanded","false"); } });
 
 loadAccessibility(); applyAccessibility(); loadDesk();
