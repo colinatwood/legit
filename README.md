@@ -47,7 +47,7 @@ Legit intentionally keeps the public experience on one map screen:
 
 Legit uses a privacy-preserving baseline informed by GDPR data-subject rights and California privacy rights. Signed-in profiles can request access/export, submit a correction request, limit sensitive-data use, and delete all profile-linked records. Legit never sells or shares personal information, so that control is always on. The profile controls are product functionality, not a legal certification or substitute for a jurisdiction-specific privacy notice.
 
-Every incoming happening is filtered before durable storage: raw request bodies are discarded, common email/phone/address patterns are removed, source URLs lose query strings and fragments, and coordinates are rounded to neighborhood precision. Exact pins are never stored. Signed-in ownership is represented by an opaque one-way hash rather than a raw account identifier. Anonymous contributions have no profile owner key and remain aggregated. Signed-in useful-evidence events are linked to the same opaque owner key for export and deletion; anonymous abuse-prevention fingerprints remain unlinked by design.
+Every incoming happening is filtered before durable storage: raw request bodies are discarded, common email/phone/address patterns are removed, source URLs lose query strings and fragments, and coordinates are rounded to neighborhood precision. Exact pins are never stored. Signed-in ownership is represented by a secret-backed HMAC fingerprint rather than a raw account identifier. Anonymous contributions have no profile owner key and remain aggregated. Signed-in useful-evidence events are linked to the same opaque owner key for export and deletion; anonymous abuse-prevention fingerprints remain unlinked by design.
 
 ## Accessibility target
 
@@ -88,10 +88,11 @@ The public detail view should expose the primary claim, its status and attributi
 - defaults identity to anonymous and always rounds coordinates to neighborhood precision;
 - stores new reports as `pending` with a bounded retention window;
 - purges expired `pending` and `flagged` records, including their claims, evidence, reports, and moderation decisions, on API traffic while preserving a non-identifying deletion audit count;
+- purges expired verification events, completed/released/expired moderator tasks after 180 days, and quality-review events after 365 days;
 - exposes a Worker `scheduled` handler for a host-level Cron Trigger so retention can run during no-traffic periods; the current Site deployment still needs that Cron Trigger attached before no-traffic cleanup is guaranteed;
 - keeps attachment metadata and low-legitimacy media in `private_review` state; raw file bytes are not accepted by this endpoint;
 - records claims, evidence, and moderation reports in D1; and
-- applies a privacy-preserving, in-memory request limit before the durable write.
+- applies a privacy-preserving, in-memory request limit and an atomic D1-backed minute bucket before the durable write.
 
 Public review status is aggregate-only through `GET /api/moderation/status`. The authenticated moderator contract is fail-closed: `GET /api/moderation/queue` exposes pending happenings and privacy requests only after a server-side `MODERATOR_TOKEN` check, and `POST /api/moderation/actions` records append-only happening decisions plus privacy-request resolution status and a pseudonymous moderator fingerprint. The token is never accepted from the public UI or stored in the browser. Database migrations are canonical and applied before the Worker is uploaded.
 
@@ -115,7 +116,7 @@ Reputation is awarded by server-side events, not by the number of posts or votes
 - points are based on evidence usefulness, not agreement with a claim; and
 - corrections and Legit outcomes will be awarded only after their review state changes, never from client-supplied point values.
 
-The fingerprint is a truncated, pseudonymous abuse-control correlation value derived server-side; raw network identifiers are not shown in the ledger or returned to the browser.
+The fingerprint is a truncated, secret-backed HMAC abuse-control correlation value derived server-side; raw network identifiers are not shown in the ledger or returned to the browser. The Site identity boundary supplies `oai-authenticated-user-id` for signed-in requests; the API does not accept user IDs from request bodies and rejects cross-origin mutations.
 
 ## Moderator safety and accountability framework
 
@@ -123,7 +124,7 @@ Moderator access is fail-closed and supports a second verification secret throug
 
 Moderator tasks can be claimed and released through `/api/moderation/tasks`. Decisions close the task and record response time. `/api/moderation/metrics` reports only the authenticated moderator's workload plus aggregate team totals and daily trends. A quality reviewer can record an append-only `upheld`, `reversed`, or `inconclusive` outcome through `/api/moderation/quality`; a reversed `hold` or `flag` is counted as an illegitimate bounce. The system prevents a moderator from reviewing their own decision.
 
-This creates accountability without exposing moderators to the public. The service stores only one-way credential fingerprints and rotating verification timestamps; hosting-provider security logs remain outside the application’s control.
+This creates accountability without exposing moderators to the public. The service stores only secret-backed HMAC credential fingerprints and rotating verification timestamps; hosting-provider security logs remain outside the application’s control. Completed moderator task history is retained for 180 days and quality-review history for 365 days to balance accountability with data minimization.
 
 ## Run locally
 

@@ -1,5 +1,12 @@
 const MAX_BODY_BYTES = 32 * 1024;
 const ASSET_BUNDLE = __ASSET_BUNDLE__;
+const OWNER_HMAC_SECRET = "LEGIT_OWNER_HMAC_SECRET";
+const ABUSE_HMAC_SECRET = "LEGIT_ABUSE_HMAC_SECRET";
+const MODERATOR_HMAC_SECRET = "LEGIT_MODERATOR_HMAC_SECRET";
+const RETENTION_WINDOWS = {
+  moderatorTasksDays: 180,
+  moderatorQualityDays: 365
+};
 const rateBuckets = new Map();
 const MAX_RATE_BUCKETS = 5000;
 let cleanupInFlight = null;
@@ -23,8 +30,8 @@ const policy = {
   location:"all stored locations are rounded to neighborhood precision; exact pins are never stored",
   media:"uploads are never public at low legitimacy; the server receives metadata only until media review is complete",
   review:"new happenings enter a private moderation queue before public display",
-  retention:"unverified submissions receive a bounded retention window and an append-only moderation history",
-  storage:"raw request bodies are discarded; identifying text is filtered before storage, and signed-in ownership is represented only by an opaque hash",
+  retention:"unverified submissions receive a bounded retention window; verification events expire after 15 minutes, completed moderator tasks after 180 days, and quality reviews after 365 days",
+  storage:"raw request bodies are discarded; identifying text is filtered before storage, and signed-in ownership and abuse controls use secret-backed HMAC fingerprints",
   sharing:"Legit does not sell or share personal information for cross-context behavioral advertising"
 };
 const reputationRules = {
@@ -69,11 +76,20 @@ function aggregateSource(value){
   try { const url = new URL(text); return `${url.origin}${url.pathname}`.slice(0,300); }
   catch { return text.replace(/\s+/g," ").slice(0,300); }
 }
-async function ownerKey(request){
+function configuredSecret(env,name,message){
+  const secret = String(env?.[name] || "");
+  if(!secret) throw accessError(message,503);
+  return secret;
+}
+async function hmacFingerprint(secret,value,length){
+  const key = await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+  const signature = await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(value));
+  return [...new Uint8Array(signature)].map(byte => byte.toString(16).padStart(2,"0")).join("").slice(0,length);
+}
+async function ownerKey(env,request){
   const userId = String(request.headers.get("oai-authenticated-user-id") || "").trim();
   if(!userId) throw accessError("Sign in to manage profile data.",401);
-  const digest = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(`legit-owner-v1|${userId}`));
-  return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2,"0")).join("").slice(0,48);
+  return hmacFingerprint(configuredSecret(env,OWNER_HMAC_SECRET,"Profile security is not configured on this deployment."),`legit-owner-v2|${userId}`,48);
 }
 async function ensurePrivacySchema(env){
   if(!env.DB) throw accessError("Durable privacy storage is unavailable.",503);
@@ -82,8 +98,14 @@ async function purgeExpiredRecords(env){
   if(!env.DB) return {deletedHappenings:0,deletedReputationEvents:0};
   const now = new Date().toISOString();
   const abuseCutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-  await env.DB.prepare("DELETE FROM abuse_buckets WHERE bucket_start < ?").bind(abuseCutoff).run();
-  await env.DB.prepare("DELETE FROM moderator_verification_events WHERE expires_at < ?").bind(now).run();
+  const taskCutoff = new Date(Date.now() - RETENTION_WINDOWS.moderatorTasksDays * 24 * 60 * 60 * 1000).toISOString();
+  const qualityCutoff = new Date(Date.now() - RETENTION_WINDOWS.moderatorQualityDays * 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM abuse_buckets WHERE bucket_start < ?").bind(abuseCutoff),
+    env.DB.prepare("DELETE FROM moderator_verification_events WHERE expires_at < ?").bind(now),
+    env.DB.prepare("DELETE FROM moderator_tasks WHERE status IN ('completed','released','expired') AND COALESCE(completed_at,claimed_at) < ?").bind(taskCutoff),
+    env.DB.prepare("DELETE FROM moderator_quality_events WHERE created_at < ?").bind(qualityCutoff)
+  ]);
   const expiredWhere = "review_state IN ('pending', 'flagged') AND retention_until IS NOT NULL AND retention_until < ?";
   const count = await env.DB.prepare(`SELECT COUNT(*) AS total FROM happenings WHERE ${expiredWhere}`).bind(now).first();
   const deletedHappenings = Number(count?.total || 0);
@@ -113,10 +135,8 @@ async function readJson(request){
   if(new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) throw new Error("Submission is too large for the privacy gate.");
   try { return JSON.parse(raw || "{}"); } catch { throw new Error("Submission must be valid JSON."); }
 }
-async function allowRequest(request,scope="write"){
-  const rawKey = request.headers.get("CF-Connecting-IP") || "shared-anonymous-client";
-  const digest = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(rawKey));
-  const key = `${scope}:${[...new Uint8Array(digest)].map(value => value.toString(16).padStart(2,"0")).join("")}`;
+async function allowRequest(env,request,scope="write"){
+  const key = `${scope}:${await actorFingerprint(env,request)}`;
   const bucket = Math.floor(Date.now() / 60000);
   for(const [storedKey,value] of rateBuckets){ if(value.bucket < bucket - 1) rateBuckets.delete(storedKey); }
   if(!rateBuckets.has(key) && rateBuckets.size >= MAX_RATE_BUCKETS){ const oldestKey=rateBuckets.keys().next().value; if(oldestKey) rateBuckets.delete(oldestKey); }
@@ -128,23 +148,14 @@ async function allowRequest(request,scope="write"){
 async function allowDurableRequest(env,request,scope){
   if(!env.DB) return true;
   const limit = durableWriteLimits[scope] || 20;
-  const fingerprint = scope.startsWith("/api/moderation") ? await moderatorRateFingerprint(request) : await actorFingerprint(request);
+  const fingerprint = scope.startsWith("/api/moderation") ? await moderatorRateFingerprint(env,request) : await actorFingerprint(env,request);
   const bucketStart = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
-  const current = await env.DB.prepare("SELECT request_count FROM abuse_buckets WHERE actor_fingerprint=? AND scope=? AND bucket_start=? LIMIT 1").bind(fingerprint,scope,bucketStart).first();
-  const count = Number(current?.request_count || 0);
-  if(count >= limit) return false;
-  const nextCount = count + 1;
-  if(current){
-    await env.DB.prepare("UPDATE abuse_buckets SET request_count=?,updated_at=? WHERE actor_fingerprint=? AND scope=? AND bucket_start=?").bind(nextCount,new Date().toISOString(),fingerprint,scope,bucketStart).run();
-  }else{
-    await env.DB.prepare("INSERT INTO abuse_buckets (actor_fingerprint,scope,bucket_start,request_count,updated_at) VALUES (?,?,?,?,?)").bind(fingerprint,scope,bucketStart,nextCount,new Date().toISOString()).run();
-  }
-  return true;
+  const current = await env.DB.prepare("INSERT INTO abuse_buckets (actor_fingerprint,scope,bucket_start,request_count,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(actor_fingerprint,scope,bucket_start) DO UPDATE SET request_count=MIN(abuse_buckets.request_count+1,?),updated_at=excluded.updated_at RETURNING request_count").bind(fingerprint,scope,bucketStart,1,new Date().toISOString(),limit + 1).first();
+  return Number(current?.request_count || 0) <= limit;
 }
-async function moderatorRateFingerprint(request){
+async function moderatorRateFingerprint(env,request){
   const raw = request.headers.get("authorization") || "missing-moderator-credential";
-  const digest = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(`legit-moderator-rate-v1|${raw}`));
-  return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2,"0")).join("").slice(0,32);
+  return hmacFingerprint(configuredSecret(env,ABUSE_HMAC_SECRET,"Abuse protection is not configured on this deployment."),`legit-moderator-rate-v2|${raw}`,32);
 }
 function requireText(value,label,max){ const text = sanitizeText(value,max); if(!text) throw new Error(`${label} is required.`); return text; }
 function normalizeHappening(input){
@@ -176,7 +187,7 @@ function normalizeHappening(input){
 async function persistHappening(env,item,request){
   if(!env.DB) throw new Error("Durable moderation storage is unavailable.");
   await ensurePrivacySchema(env);
-  const owner = request.headers.get("oai-authenticated-user-id") ? await ownerKey(request) : null;
+  const owner = request.headers.get("oai-authenticated-user-id") ? await ownerKey(env,request) : null;
   const claimId = `claim-${item.id}`;
   const statements = [
     env.DB.prepare(`INSERT INTO happenings (id,title,body,topic,public_location,public_lat,public_lng,location_precision,identity_visibility,identity_display,impact,balance,legitimacy_score,review_state,attachment_state,attachment_count,created_at,retention_until,owner_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(item.id,item.title,item.body,item.topic,item.location,item.publicLat,item.publicLng,item.locationPrecision,item.identityVisibility,item.identityDisplay,1,"agnostic",0,item.reviewState,item.attachmentState,item.attachmentCount,item.createdAt,item.retentionUntil,owner),
@@ -195,14 +206,13 @@ async function persistReport(env,input,request){
   const targetType = input.targetType || "happening";
   if(!["happening","claim","evidence"].includes(targetType)) throw new Error("This report target is not supported.");
   const createdAt = new Date().toISOString();
-  const owner = request?.headers.get("oai-authenticated-user-id") ? await ownerKey(request) : null;
+  const owner = request?.headers.get("oai-authenticated-user-id") ? await ownerKey(env,request) : null;
   await env.DB.prepare(`INSERT INTO moderation_reports (id,target_type,target_id,reason,details,review_state,reporter_owner_key,created_at) VALUES (?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),targetType,targetId,reason,details,"pending",owner,createdAt).run();
   return {reviewState:"pending",message:"Submitted for review. No identity or exact location is made public."};
 }
-async function actorFingerprint(request){
+async function actorFingerprint(env,request){
   const raw = `${request.headers.get("CF-Connecting-IP") || "shared-anonymous-client"}|${request.headers.get("user-agent") || "unknown"}`;
-  const digest = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw));
-  return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2,"0")).join("").slice(0,32);
+  return hmacFingerprint(configuredSecret(env,ABUSE_HMAC_SECRET,"Abuse protection is not configured on this deployment."),`legit-actor-v2|${raw}`,32);
 }
 function assessmentStoryId(targetId){
   const separator = targetId.indexOf(":");
@@ -213,8 +223,8 @@ async function persistAssessment(env,request,input){
   const actionType = requireText(input.actionType,"An assessment type",40);
   if(actionType !== "evidence_useful") throw new Error("This assessment type is not enabled.");
   const targetId = requireText(input.targetId,"A target",160);
-  const fingerprint = await actorFingerprint(request);
-  const owner = request.headers.get("oai-authenticated-user-id") ? await ownerKey(request) : null;
+  const fingerprint = await actorFingerprint(env,request);
+  const owner = request.headers.get("oai-authenticated-user-id") ? await ownerKey(env,request) : null;
   const actionDay = new Date().toISOString().slice(0,10);
   const existing = await env.DB.prepare(`SELECT id FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND target_id=? LIMIT 1`).bind(fingerprint,actionType,targetId).first();
   if(existing) return {accepted:false,pointsAwarded:0,reason:"Already counted"};
@@ -367,8 +377,7 @@ async function requireModerator(request,env,options={}){
   const header = request.headers.get("authorization") || "";
   const provided = /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i,"") : "";
   if(!provided || !constantTimeEqual(provided,configured)) throw accessError("Moderator authorization is required.",401);
-  const digest = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(provided));
-  const fingerprint = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2,"0")).join("").slice(0,24);
+  const fingerprint = await hmacFingerprint(configuredSecret(env,MODERATOR_HMAC_SECRET,"Moderator identity protection is not configured on this deployment."),`legit-moderator-v2|${provided}`,24);
   const allowlist = String(env.MODERATOR_FINGERPRINT_ALLOWLIST || "").split(",").map(value => value.trim()).filter(Boolean);
   if(allowlist.length && !allowlist.includes(fingerprint)) throw accessError("Moderator verification is not active for this credential.",403);
   const verificationSecret = String(env.MODERATOR_VERIFICATION_SECRET || "");
@@ -518,13 +527,13 @@ async function recordReportAction(env,request,input){
   return {reportId,status,reviewState,resolvedAt};
 }
 async function deskItems(env,request){
-  const key = await ownerKey(request);
+  const key = await ownerKey(env,request);
   if(!env.DB) throw accessError("Durable desk storage is unavailable.",503);
   const rows = await env.DB.prepare("SELECT happening_key,created_at FROM desk_items WHERE owner_key=? ORDER BY created_at DESC LIMIT 500").bind(key).all();
   return {authenticated:true,items:rows.results || []};
 }
 async function saveDeskItem(env,request,input){
-  const key = await ownerKey(request);
+  const key = await ownerKey(env,request);
   if(!env.DB) throw accessError("Durable desk storage is unavailable.",503);
   const happeningKey = requireText(input.happeningKey,"A desk item",180);
   const action = input.action === "remove" ? "remove" : "save";
@@ -536,7 +545,7 @@ async function saveDeskItem(env,request,input){
   return {saved:true,happeningKey};
 }
 async function privacyProfile(env,request){
-  const key = await ownerKey(request);
+  const key = await ownerKey(env,request);
   await ensurePrivacySchema(env);
   const preference = await env.DB.prepare("SELECT opt_out_sharing,limit_sensitive,updated_at FROM privacy_preferences WHERE owner_key=? LIMIT 1").bind(key).first();
   const summary = await env.DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN review_state='pending' THEN 1 ELSE 0 END) AS pending FROM happenings WHERE owner_key=?").bind(key).first();
@@ -545,7 +554,7 @@ async function privacyProfile(env,request){
   return {authenticated:true,controls:{aggregateOnly:true,optOutSharing:true,limitSensitive:preference ? Boolean(preference.limit_sensitive) : true,updatedAt:preference?.updated_at || null},dataSummary:{happenings:Number(summary?.total || 0),pending:Number(summary?.pending || 0),reputationEvents:Number(reputation?.total || 0),deskItems:Number(desk?.total || 0)},disclosure:"Only sanitized, neighborhood-level records linked to this signed-in profile are included. Legit never sells or shares personal information. Anonymous contributions and anonymous abuse-prevention fingerprints are not linked to a profile."};
 }
 async function exportPrivacyData(env,request){
-  const key = await ownerKey(request);
+  const key = await ownerKey(env,request);
   await ensurePrivacySchema(env);
   const preferences = await env.DB.prepare("SELECT opt_out_sharing,limit_sensitive,updated_at FROM privacy_preferences WHERE owner_key=? LIMIT 1").bind(key).first();
   const happenings = await env.DB.prepare("SELECT id,title,body,topic,public_location,public_lat,public_lng,location_precision,identity_visibility,impact,balance,legitimacy_score,review_state,attachment_state,attachment_count,created_at,retention_until FROM happenings WHERE owner_key=? ORDER BY created_at ASC").bind(key).all();
@@ -557,7 +566,7 @@ async function exportPrivacyData(env,request){
   return {exportedAt:new Date().toISOString(),storageModel:"sanitized-with-neighborhood-aggregation",preferences:preferences || {opt_out_sharing:1,limit_sensitive:1},happenings:happenings.results || [],claims:claims.results || [],evidence:evidence.results || [],privacyRequests:requests.results || [],reputationEvents:reputation.results || [],deskItems:desk.results || []};
 }
 async function savePrivacyPreferences(env,request,input){
-  const key = await ownerKey(request);
+  const key = await ownerKey(env,request);
   await ensurePrivacySchema(env);
   const updatedAt = new Date().toISOString();
   const optOutSharing = input.optOutSharing === false ? 0 : 1;
@@ -566,7 +575,7 @@ async function savePrivacyPreferences(env,request,input){
   return {optOutSharing:Boolean(optOutSharing),limitSensitive:Boolean(limitSensitive),updatedAt};
 }
 async function saveCorrectionRequest(env,request,input){
-  const key = await ownerKey(request);
+  const key = await ownerKey(env,request);
   await ensurePrivacySchema(env);
   const details = requireText(input.details,"A correction request",1000);
   const createdAt = new Date().toISOString();
@@ -574,7 +583,7 @@ async function saveCorrectionRequest(env,request,input){
   return {status:"pending",createdAt};
 }
 async function deleteAllProfileData(env,request){
-  const key = await ownerKey(request);
+  const key = await ownerKey(env,request);
   await ensurePrivacySchema(env);
   const summary = await env.DB.prepare("SELECT COUNT(*) AS total FROM happenings WHERE owner_key=?").bind(key).first();
   const reputation = await env.DB.prepare("SELECT COUNT(*) AS total FROM reputation_events WHERE owner_key=?").bind(key).first();
@@ -604,7 +613,7 @@ async function handleApi(request,env,ctx){
     const fetchSite = request.headers.get("sec-fetch-site");
     if(origin){ try { if(new URL(origin).origin !== url.origin) return jsonResponse({error:"Cross-origin mutations are not accepted."},403); } catch { return jsonResponse({error:"Invalid request origin."},403); } }
     if(fetchSite && !["same-origin","same-site","none"].includes(fetchSite)) return jsonResponse({error:"Cross-site mutations are not accepted."},403);
-    if(!(await allowRequest(request,url.pathname))) return jsonResponse({error:"Please wait before sending another report."},429,{"retry-after":"60"});
+    if(!(await allowRequest(env,request,url.pathname))) return jsonResponse({error:"Please wait before sending another report."},429,{"retry-after":"60"});
     if(!(await allowDurableRequest(env,request,url.pathname))) return jsonResponse({error:"This action is temporarily rate-limited. Please try again later."},429,{"retry-after":"60"});
   }
   if(url.pathname === "/api/health" && request.method === "GET") return jsonResponse({ok:true,policyVersion:policy.version});

@@ -5,11 +5,14 @@ import handler from "../dist/server/index.js";
 const origin = "https://legit.example";
 const headerNames = ["content-security-policy","strict-transport-security","x-content-type-options","x-frame-options","referrer-policy","permissions-policy"];
 const workerSource = await readFile(new URL("../worker/index.js",import.meta.url),"utf8");
+const smokeSecrets = {LEGIT_OWNER_HMAC_SECRET:"owner-smoke-secret",LEGIT_ABUSE_HMAC_SECRET:"abuse-smoke-secret",LEGIT_MODERATOR_HMAC_SECRET:"moderator-smoke-secret"};
 assert.doesNotMatch(workerSource,/CREATE TABLE IF NOT EXISTS|CREATE INDEX IF NOT EXISTS/i,"runtime DDL must remain out of the Worker");
+assert.match(workerSource,/crypto\.subtle\.importKey\("raw".*HMAC/,"stored fingerprints must use HMAC");
+assert.doesNotMatch(workerSource,/digest\("SHA-256".*owner|digest\("SHA-256".*actor/i,"owner and actor fingerprints must not use unsalted hashes");
 assert.equal(typeof handler.scheduled,"function","retention scheduled handler is missing");
 
 async function request(path,options={}){
-  return requestWithEnv(path,options,{});
+  return requestWithEnv(path,options,smokeSecrets);
 }
 async function requestWithEnv(path,options={},env={}){
   return handler.fetch(new Request(`${origin}${path}`,options),env);
@@ -56,10 +59,10 @@ const mockRows = [
 ];
 const mockEvidence = [{happening_id:"h-1",id:"e-1",evidence_type:"Public record",relationship:"supports",provenance:"https://example.com/record?token=removed",submitted_at:now}];
 const mockDb = {prepare(sql){
-  const statement = {bind(){return statement},run:async()=>({}),first:async()=>sql.includes("SELECT id FROM privacy_requests") ? {id:"privacy-1"} : sql.includes("FROM moderator_tasks") ? null : sql.includes("FROM moderator_quality_events") ? null : sql.includes("SELECT id,decision,moderator_fingerprint FROM moderation_decisions") ? {id:"decision-1",decision:"flag",moderator_fingerprint:"other-moderator"} : sql.includes("SELECT id FROM reputation_events") ? null : {total:0},all:async()=>({results:sql.includes("FROM happenings h") ? mockRows : sql.includes("FROM evidence e") ? mockEvidence : sql.includes("FROM privacy_requests") ? [{id:"privacy-1",request_type:"correction",details:"Fix record",status:"pending",created_at:now}] : []})};
+  const statement = {bind(){return statement},run:async()=>({}),first:async()=>sql.includes("SELECT id FROM privacy_requests") ? {id:"privacy-1"} : sql.includes("FROM moderator_tasks") ? null : sql.includes("FROM moderator_quality_events") ? null : sql.includes("SELECT id,decision,moderator_fingerprint FROM moderation_decisions") ? {id:"decision-1",decision:"flag",moderator_fingerprint:"other-moderator"} : sql.includes("SELECT id FROM reputation_events") ? null : sql.includes("RETURNING request_count") ? {request_count:1} : {total:0},all:async()=>({results:sql.includes("FROM happenings h") ? mockRows : sql.includes("FROM evidence e") ? mockEvidence : sql.includes("FROM privacy_requests") ? [{id:"privacy-1",request_type:"correction",details:"Fix record",status:"pending",created_at:now}] : []})};
   return statement;
-}};
-const databaseEnv = {DB:mockDb,MODERATOR_TOKEN:"smoke-token"};
+},batch:async()=>({})};
+const databaseEnv = {DB:mockDb,MODERATOR_TOKEN:"smoke-token",...smokeSecrets};
 const publicRead = await requestWithEnv("/api/happenings?time=all",{},databaseEnv);
 assert.equal(publicRead.status,200);
 const publicBody = await publicRead.json();
@@ -96,7 +99,7 @@ const reputationDb = {
     return statement;
   }
 };
-const assessment = await requestWithEnv("/api/reputation/assessment",{method:"POST",headers:{origin,"content-type":"application/json","CF-Connecting-IP":"actor-4","user-agent":"smoke"},body:JSON.stringify({targetId:"public-story:e4",actionType:"evidence_useful"})},{DB:reputationDb});
+const assessment = await requestWithEnv("/api/reputation/assessment",{method:"POST",headers:{origin,"content-type":"application/json","CF-Connecting-IP":"actor-4","user-agent":"smoke"},body:JSON.stringify({targetId:"public-story:e4",actionType:"evidence_useful"})},{DB:reputationDb,LEGIT_OWNER_HMAC_SECRET:"owner-smoke-secret",LEGIT_ABUSE_HMAC_SECRET:"abuse-smoke-secret"});
 assert.equal(assessment.status,202);
 assert.equal((await assessment.json()).assessment.riskState,"coordination_review");
 
