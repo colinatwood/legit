@@ -116,7 +116,7 @@ Reputation is awarded by server-side events, not by the number of posts or votes
 - points are based on evidence usefulness, not agreement with a claim; and
 - corrections and Legit outcomes will be awarded only after their review state changes, never from client-supplied point values.
 
-The fingerprint is a truncated, secret-backed HMAC abuse-control correlation value derived server-side; raw network identifiers are not shown in the ledger or returned to the browser. The Site identity boundary supplies `oai-authenticated-user-id` for signed-in requests; the API does not accept user IDs from request bodies and rejects cross-origin mutations.
+The fingerprint is a truncated, secret-backed HMAC abuse-control correlation value derived server-side; raw network identifiers are not shown in the ledger or returned to the browser. The Site identity boundary supplies a signed principal for signed-in requests; the API prefers `oai-authenticated-user-id` and falls back to the platform-injected `oai-authenticated-user-email`, HMACs it immediately, and does not accept user IDs from request bodies. Cross-origin mutations are rejected.
 
 ## Moderator safety and accountability framework
 

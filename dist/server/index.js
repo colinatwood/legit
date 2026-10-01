@@ -81,6 +81,9 @@ function configuredSecret(env,name,message){
   if(!secret) throw accessError(message,503);
   return secret;
 }
+function hasAuthenticatedPrincipal(request){
+  return Boolean(String(request?.headers.get("oai-authenticated-user-id") || "").trim() || String(request?.headers.get("oai-authenticated-user-email") || "").trim());
+}
 async function hmacFingerprint(secret,value,length){
   const key = await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
   const signature = await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(value));
@@ -88,8 +91,10 @@ async function hmacFingerprint(secret,value,length){
 }
 async function ownerKey(env,request){
   const userId = String(request.headers.get("oai-authenticated-user-id") || "").trim();
-  if(!userId) throw accessError("Sign in to manage profile data.",401);
-  return hmacFingerprint(configuredSecret(env,OWNER_HMAC_SECRET,"Profile security is not configured on this deployment."),`legit-owner-v2|${userId}`,48);
+  const email = String(request.headers.get("oai-authenticated-user-email") || "").trim().toLowerCase();
+  const principal = userId ? `id|${userId}` : email ? `email|${email}` : "";
+  if(!principal) throw accessError("Sign in to manage profile data.",401);
+  return hmacFingerprint(configuredSecret(env,OWNER_HMAC_SECRET,"Profile security is not configured on this deployment."),`legit-owner-v3|${principal}`,48);
 }
 async function ensurePrivacySchema(env){
   if(!env.DB) throw accessError("Durable privacy storage is unavailable.",503);
@@ -187,7 +192,7 @@ function normalizeHappening(input){
 async function persistHappening(env,item,request){
   if(!env.DB) throw new Error("Durable moderation storage is unavailable.");
   await ensurePrivacySchema(env);
-  const owner = request.headers.get("oai-authenticated-user-id") ? await ownerKey(env,request) : null;
+  const owner = hasAuthenticatedPrincipal(request) ? await ownerKey(env,request) : null;
   const claimId = `claim-${item.id}`;
   const statements = [
     env.DB.prepare(`INSERT INTO happenings (id,title,body,topic,public_location,public_lat,public_lng,location_precision,identity_visibility,identity_display,impact,balance,legitimacy_score,review_state,attachment_state,attachment_count,created_at,retention_until,owner_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(item.id,item.title,item.body,item.topic,item.location,item.publicLat,item.publicLng,item.locationPrecision,item.identityVisibility,item.identityDisplay,1,"agnostic",0,item.reviewState,item.attachmentState,item.attachmentCount,item.createdAt,item.retentionUntil,owner),
@@ -206,7 +211,7 @@ async function persistReport(env,input,request){
   const targetType = input.targetType || "happening";
   if(!["happening","claim","evidence"].includes(targetType)) throw new Error("This report target is not supported.");
   const createdAt = new Date().toISOString();
-  const owner = request?.headers.get("oai-authenticated-user-id") ? await ownerKey(env,request) : null;
+  const owner = hasAuthenticatedPrincipal(request) ? await ownerKey(env,request) : null;
   await env.DB.prepare(`INSERT INTO moderation_reports (id,target_type,target_id,reason,details,review_state,reporter_owner_key,created_at) VALUES (?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),targetType,targetId,reason,details,"pending",owner,createdAt).run();
   return {reviewState:"pending",message:"Submitted for review. No identity or exact location is made public."};
 }
@@ -224,7 +229,7 @@ async function persistAssessment(env,request,input){
   if(actionType !== "evidence_useful") throw new Error("This assessment type is not enabled.");
   const targetId = requireText(input.targetId,"A target",160);
   const fingerprint = await actorFingerprint(env,request);
-  const owner = request.headers.get("oai-authenticated-user-id") ? await ownerKey(env,request) : null;
+  const owner = hasAuthenticatedPrincipal(request) ? await ownerKey(env,request) : null;
   const actionDay = new Date().toISOString().slice(0,10);
   const existing = await env.DB.prepare(`SELECT id FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND target_id=? LIMIT 1`).bind(fingerprint,actionType,targetId).first();
   if(existing) return {accepted:false,pointsAwarded:0,reason:"Already counted"};

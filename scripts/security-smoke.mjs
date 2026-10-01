@@ -81,6 +81,10 @@ const deskSave = await requestWithEnv("/api/desk",{method:"POST",headers:deskHea
 assert.equal(deskSave.status,200);
 const deskRead = await requestWithEnv("/api/desk",{headers:{"oai-authenticated-user-id":"smoke-user"}},databaseEnv);
 assert.equal(deskRead.status,200);
+const emailDeskRead = await requestWithEnv("/api/desk",{headers:{"oai-authenticated-user-email":"smoke@example.com"}},databaseEnv);
+assert.equal(emailDeskRead.status,200);
+const bodyIdentity = await request("/api/profile/privacy",{method:"POST",headers:{origin,"content-type":"application/json"},body:JSON.stringify({action:"save_preferences","oai-authenticated-user-id":"body-supplied-user"})});
+assert.equal(bodyIdentity.status,401);
 
 const reputationRows = [
   {id:"r-1",actor_fingerprint:"actor-1",action_type:"evidence_useful",target_id:"public-story:e1",action_day:now.slice(0,10),points_awarded:2,risk_state:"normal",created_at:now},

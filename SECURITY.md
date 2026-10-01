@@ -32,7 +32,7 @@ Allow time for confirmation and remediation before public disclosure. Legit cont
 - Moderation decisions are append-only and record a pseudonymous moderator fingerprint.
 - The moderator fingerprint is a secret-backed HMAC of the credential only; moderator IP and user-agent values are not stored in the moderator task, quality, or verification tables.
 - `LEGIT_OWNER_HMAC_SECRET`, `LEGIT_ABUSE_HMAC_SECRET`, and `LEGIT_MODERATOR_HMAC_SECRET` are production-only Sites secrets. Profile and write paths fail closed when their required secret is absent; secret values never belong in source control or `.openai/hosting.json`.
-- Sites supplies `oai-authenticated-user-id` for signed-in requests. The application accepts no account identifier in JSON bodies and requires same-origin or same-site mutation metadata; deployments must preserve the platform identity-injection boundary and must not proxy or rewrite this header from user input.
+- Sites supplies a signed authenticated principal to the Worker. The application prefers `oai-authenticated-user-id` and falls back to the platform-injected `oai-authenticated-user-email` when that is the available Site header; either is HMACed immediately and the raw value is never stored. The application accepts no account identifier in JSON bodies and requires same-origin or same-site mutation metadata; deployments must preserve the platform identity-injection boundary and must not proxy or rewrite these headers from user input.
 - The external Leaflet map assets are version-pinned and loaded with Subresource Integrity checks.
 - Browser responses include baseline clickjacking, MIME-sniffing, referrer, permissions, transport, and Content Security Policy protections.
 
