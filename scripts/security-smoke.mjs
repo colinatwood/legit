@@ -56,7 +56,7 @@ const mockRows = [
 ];
 const mockEvidence = [{happening_id:"h-1",id:"e-1",evidence_type:"Public record",relationship:"supports",provenance:"https://example.com/record?token=removed",submitted_at:now}];
 const mockDb = {prepare(sql){
-  const statement = {bind(){return statement},run:async()=>({}),first:async()=>sql.includes("SELECT id FROM privacy_requests") ? {id:"privacy-1"} : sql.includes("SELECT id FROM reputation_events") ? null : {total:0},all:async()=>({results:sql.includes("FROM happenings h") ? mockRows : sql.includes("FROM evidence e") ? mockEvidence : sql.includes("FROM privacy_requests") ? [{id:"privacy-1",request_type:"correction",details:"Fix record",status:"pending",created_at:now}] : []})};
+  const statement = {bind(){return statement},run:async()=>({}),first:async()=>sql.includes("SELECT id FROM privacy_requests") ? {id:"privacy-1"} : sql.includes("FROM moderator_tasks") ? null : sql.includes("FROM moderator_quality_events") ? null : sql.includes("SELECT id,decision,moderator_fingerprint FROM moderation_decisions") ? {id:"decision-1",decision:"flag",moderator_fingerprint:"other-moderator"} : sql.includes("SELECT id FROM reputation_events") ? null : {total:0},all:async()=>({results:sql.includes("FROM happenings h") ? mockRows : sql.includes("FROM evidence e") ? mockEvidence : sql.includes("FROM privacy_requests") ? [{id:"privacy-1",request_type:"correction",details:"Fix record",status:"pending",created_at:now}] : []})};
   return statement;
 }};
 const databaseEnv = {DB:mockDb,MODERATOR_TOKEN:"smoke-token"};
@@ -110,9 +110,24 @@ assert.equal(missingModerator.status,503);
 const wrongModerator = await requestWithEnv("/api/moderation/queue",{headers:{authorization:"Bearer wrong-token"}},databaseEnv);
 assert.equal(wrongModerator.status,401);
 
+const moderatorVerify = await requestWithEnv("/api/moderation/verify",{method:"POST",headers:{origin,authorization:"Bearer smoke-token"}},databaseEnv);
+assert.equal(moderatorVerify.status,200);
+assert.equal((await moderatorVerify.json()).publicIdentity,"anonymous");
+
+const moderatorTask = await requestWithEnv("/api/moderation/tasks",{method:"POST",headers:{origin,authorization:"Bearer smoke-token","content-type":"application/json"},body:JSON.stringify({taskType:"happening",targetId:"h-1",action:"claim"})},databaseEnv);
+assert.equal(moderatorTask.status,200);
+
+const moderatorMetrics = await requestWithEnv("/api/moderation/metrics?days=7",{headers:{authorization:"Bearer smoke-token"}},databaseEnv);
+assert.equal(moderatorMetrics.status,200);
+assert.equal((await moderatorMetrics.json()).anonymity.stablePublicAlias,"none");
+
+const moderatorQuality = await requestWithEnv("/api/moderation/quality",{method:"POST",headers:{origin,authorization:"Bearer smoke-token","content-type":"application/json"},body:JSON.stringify({decisionId:"decision-1",outcome:"reversed",basis:"Independent evidence showed the flag was not warranted."})},databaseEnv);
+assert.equal(moderatorQuality.status,202);
+assert.equal((await moderatorQuality.json()).review.illegitimateBounce,true);
+
 const privacyAction = await requestWithEnv("/api/moderation/actions",{method:"POST",headers:{origin,"authorization":"Bearer smoke-token","content-type":"application/json"},body:JSON.stringify({actionType:"privacy_request",requestId:"privacy-1",status:"resolved",resolution:"Reviewed by moderator."})},databaseEnv);
 assert.equal(privacyAction.status,202);
 
 await handler.scheduled({cron:"0 * * * *"},databaseEnv);
 
-console.log("Security smoke passed: headers, same-origin boundary, method gate, JSON gate, malformed-body handling, public read fail-closed behavior, report aggregation, coordination-review scoring, moderator fail-closed checks, privacy-request moderation, scheduled retention wiring, and profile privacy checks.");
+console.log("Security smoke passed: headers, same-origin boundary, method gate, JSON gate, malformed-body handling, public read fail-closed behavior, report aggregation, coordination-review scoring, moderator verification, anonymous task/metrics/quality controls, moderator fail-closed checks, privacy-request moderation, scheduled retention wiring, and profile privacy checks.");

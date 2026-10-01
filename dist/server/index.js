@@ -43,7 +43,10 @@ const durableWriteLimits = {
   "/api/reputation/assessment":20,
   "/api/profile/privacy":10,
   "/api/desk":20,
-  "/api/moderation/actions":20
+  "/api/moderation/actions":20,
+  "/api/moderation/verify":8,
+  "/api/moderation/tasks":30,
+  "/api/moderation/quality":15
 };
 
 function jsonResponse(body,status=200,extraHeaders={}){ return new Response(JSON.stringify(body),{status,headers:{...jsonHeaders,...extraHeaders}}); }
@@ -124,7 +127,7 @@ async function allowRequest(request,scope="write"){
 async function allowDurableRequest(env,request,scope){
   if(!env.DB) return true;
   const limit = durableWriteLimits[scope] || 20;
-  const fingerprint = await actorFingerprint(request);
+  const fingerprint = scope.startsWith("/api/moderation") ? await moderatorRateFingerprint(request) : await actorFingerprint(request);
   const bucketStart = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
   const current = await env.DB.prepare("SELECT request_count FROM abuse_buckets WHERE actor_fingerprint=? AND scope=? AND bucket_start=? LIMIT 1").bind(fingerprint,scope,bucketStart).first();
   const count = Number(current?.request_count || 0);
@@ -136,6 +139,11 @@ async function allowDurableRequest(env,request,scope){
     await env.DB.prepare("INSERT INTO abuse_buckets (actor_fingerprint,scope,bucket_start,request_count,updated_at) VALUES (?,?,?,?,?)").bind(fingerprint,scope,bucketStart,nextCount,new Date().toISOString()).run();
   }
   return true;
+}
+async function moderatorRateFingerprint(request){
+  const raw = request.headers.get("authorization") || "missing-moderator-credential";
+  const digest = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(`legit-moderator-rate-v1|${raw}`));
+  return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2,"0")).join("").slice(0,32);
 }
 function requireText(value,label,max){ const text = sanitizeText(value,max); if(!text) throw new Error(`${label} is required.`); return text; }
 function normalizeHappening(input){
@@ -352,7 +360,7 @@ function constantTimeEqual(left,right){
   for(let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
   return difference === 0;
 }
-async function requireModerator(request,env){
+async function requireModerator(request,env,options={}){
   const configured = String(env.MODERATOR_TOKEN || "");
   if(!configured) throw accessError("Moderator access is not configured on this deployment.",503);
   const header = request.headers.get("authorization") || "";
@@ -360,7 +368,90 @@ async function requireModerator(request,env){
   if(!provided || !constantTimeEqual(provided,configured)) throw accessError("Moderator authorization is required.",401);
   const digest = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(provided));
   const fingerprint = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2,"0")).join("").slice(0,24);
-  return fingerprint;
+  const allowlist = String(env.MODERATOR_FINGERPRINT_ALLOWLIST || "").split(",").map(value => value.trim()).filter(Boolean);
+  if(allowlist.length && !allowlist.includes(fingerprint)) throw accessError("Moderator verification is not active for this credential.",403);
+  const verificationSecret = String(env.MODERATOR_VERIFICATION_SECRET || "");
+  const providedVerification = request.headers.get("x-moderator-verification") || "";
+  if(verificationSecret && (!providedVerification || !constantTimeEqual(providedVerification,verificationSecret))) throw accessError("Additional moderator verification is required.",401);
+  const verificationLevel = verificationSecret ? "token_and_secret" : "token";
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  if(options.record !== false && env.DB){
+    await env.DB.prepare("INSERT INTO moderator_verification_events (id,moderator_fingerprint,verification_level,created_at,expires_at) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(),fingerprint,verificationLevel,new Date().toISOString(),expiresAt).run();
+  }
+  return {fingerprint,verificationLevel,expiresAt};
+}
+async function completeModeratorTask(env,taskType,targetId,moderatorFingerprint,decision,completedAt){
+  if(!env.DB) return null;
+  const current = await env.DB.prepare("SELECT id,claimed_at FROM moderator_tasks WHERE task_type=? AND target_id=? AND moderator_fingerprint=? AND status='claimed' ORDER BY claimed_at DESC LIMIT 1").bind(taskType,targetId,moderatorFingerprint).first();
+  const claimedAt = current?.claimed_at || completedAt;
+  const responseSeconds = Math.max(0,Math.round((Date.parse(completedAt) - Date.parse(claimedAt)) / 1000));
+  if(current){
+    await env.DB.prepare("UPDATE moderator_tasks SET status='completed',completed_at=?,response_seconds=?,completed_decision=? WHERE id=?").bind(completedAt,responseSeconds,decision,current.id).run();
+    return {taskId:current.id,responseSeconds};
+  }
+  const taskId = crypto.randomUUID();
+  await env.DB.prepare("INSERT INTO moderator_tasks (id,task_type,target_id,moderator_fingerprint,status,claimed_at,completed_at,response_seconds,completed_decision) VALUES (?,?,?,?,?,?,?,?,?)").bind(taskId,taskType,targetId,moderatorFingerprint,"completed",completedAt,completedAt,0,decision).run();
+  return {taskId,responseSeconds:0};
+}
+async function moderationTask(env,request,input){
+  const moderator = await requireModerator(request,env);
+  if(!env.DB) throw accessError("Durable moderation storage is unavailable.",503);
+  const taskType = requireText(input.taskType,"A task type",30);
+  if(!["happening","report","privacy_request","coordination"].includes(taskType)) throw new Error("This moderation task type is not supported.");
+  const targetId = requireText(input.targetId,"A task target",160);
+  const action = requireText(input.action || "claim","A task action",20);
+  if(!["claim","release"].includes(action)) throw new Error("Task action must be claim or release.");
+  const active = await env.DB.prepare("SELECT id,moderator_fingerprint,claimed_at FROM moderator_tasks WHERE task_type=? AND target_id=? AND status='claimed' ORDER BY claimed_at DESC LIMIT 1").bind(taskType,targetId).first();
+  if(action === "claim"){
+    if(active && active.moderator_fingerprint !== moderator.fingerprint) throw accessError("This task is already claimed by another moderator.",409);
+    if(active) return {taskId:active.id,status:"claimed",claimedAt:active.claimed_at,verificationLevel:moderator.verificationLevel};
+    const claimedAt = new Date().toISOString();
+    const taskId = crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO moderator_tasks (id,task_type,target_id,moderator_fingerprint,status,claimed_at) VALUES (?,?,?,?,?,?)").bind(taskId,taskType,targetId,moderator.fingerprint,"claimed",claimedAt).run();
+    return {taskId,status:"claimed",claimedAt,verificationLevel:moderator.verificationLevel};
+  }
+  if(!active || active.moderator_fingerprint !== moderator.fingerprint) throw accessError("This task is not claimed by this moderator.",409);
+  await env.DB.prepare("UPDATE moderator_tasks SET status='released',completed_at=? WHERE id=?").bind(new Date().toISOString(),active.id).run();
+  return {taskId:active.id,status:"released"};
+}
+async function moderatorQuality(env,request,input){
+  const moderator = await requireModerator(request,env);
+  if(!env.DB) throw accessError("Durable moderation storage is unavailable.",503);
+  const decisionId = requireText(input.decisionId,"A moderation decision",120);
+  const outcome = requireText(input.outcome,"A quality outcome",20);
+  if(!["upheld","reversed","inconclusive"].includes(outcome)) throw new Error("Quality outcome must be upheld, reversed, or inconclusive.");
+  const basis = requireText(input.basis,"A quality basis",1000);
+  const decision = await env.DB.prepare("SELECT id,decision,moderator_fingerprint FROM moderation_decisions WHERE id=? LIMIT 1").bind(decisionId).first();
+  if(!decision) throw new Error("Moderation decision was not found.");
+  if(decision.moderator_fingerprint === moderator.fingerprint) throw accessError("A moderator cannot quality-review their own decision.",403);
+  const existing = await env.DB.prepare("SELECT id FROM moderator_quality_events WHERE decision_id=? LIMIT 1").bind(decisionId).first();
+  if(existing) return {accepted:false,reason:"This decision already has a quality review."};
+  await env.DB.prepare("INSERT INTO moderator_quality_events (id,decision_id,outcome,basis,reviewer_fingerprint,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),decisionId,outcome,basis,moderator.fingerprint,new Date().toISOString()).run();
+  return {accepted:true,outcome,illegitimateBounce:outcome === "reversed" && ["hold","flag"].includes(decision.decision)};
+}
+async function moderatorMetrics(env,request,url){
+  const moderator = await requireModerator(request,env,{record:false});
+  if(!env.DB) throw accessError("Durable moderation storage is unavailable.",503);
+  const requestedDays = Number(url.searchParams.get("days") || 30);
+  const days = Number.isFinite(requestedDays) ? Math.min(90,Math.max(1,Math.floor(requestedDays))) : 30;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const [assigned,completed,avgResponse,decisions,bounces,team,daily] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS total FROM moderator_tasks WHERE moderator_fingerprint=? AND claimed_at>=?").bind(moderator.fingerprint,since).first(),
+    env.DB.prepare("SELECT COUNT(*) AS total FROM moderator_tasks WHERE moderator_fingerprint=? AND status='completed' AND completed_at>=?").bind(moderator.fingerprint,since).first(),
+    env.DB.prepare("SELECT AVG(response_seconds) AS average FROM moderator_tasks WHERE moderator_fingerprint=? AND status='completed' AND completed_at>=?").bind(moderator.fingerprint,since).first(),
+    env.DB.prepare("SELECT COUNT(*) AS total FROM moderation_decisions WHERE moderator_fingerprint=? AND created_at>=?").bind(moderator.fingerprint,since).first(),
+    env.DB.prepare("SELECT COUNT(*) AS total FROM moderator_quality_events q JOIN moderation_decisions d ON d.id=q.decision_id WHERE d.moderator_fingerprint=? AND q.outcome='reversed' AND d.decision IN ('hold','flag') AND q.created_at>=?").bind(moderator.fingerprint,since).first(),
+    env.DB.prepare("SELECT COUNT(DISTINCT moderator_fingerprint) AS moderators, COUNT(*) AS decisions FROM moderation_decisions WHERE created_at>=?").bind(since).first(),
+    env.DB.prepare("SELECT substr(d.created_at,1,10) AS day, COUNT(*) AS decisions, SUM(CASE WHEN q.outcome='reversed' AND d.decision IN ('hold','flag') THEN 1 ELSE 0 END) AS illegitimate_bounces FROM moderation_decisions d LEFT JOIN moderator_quality_events q ON q.decision_id=d.id WHERE d.created_at>=? GROUP BY substr(d.created_at,1,10) ORDER BY day ASC").bind(since).all()
+  ]);
+  return {
+    window:{days,since},
+    verification:{level:moderator.verificationLevel,expiresAt:moderator.expiresAt},
+    yourMetrics:{tasksAssigned:Number(assigned?.total || 0),tasksCompleted:Number(completed?.total || 0),decisions:Number(decisions?.total || 0),averageResponseMinutes:Math.round((Number(avgResponse?.average || 0) / 60) * 10) / 10,illegitimateBounces:Number(bounces?.total || 0)},
+    teamMetrics:{activeModerators:Number(team?.moderators || 0),decisions:Number(team?.decisions || 0)},
+    daily:(daily?.results || []).map(row=>({day:row.day,decisions:Number(row.decisions || 0),illegitimateBounces:Number(row.illegitimate_bounces || 0)})),
+    anonymity:{publicModeratorIdentity:"never disclosed",stablePublicAlias:"none",storedIdentity:"one-way credential fingerprint only",operatorNote:"The public API never returns moderator identifiers. Hosting and security logs remain controlled by the service operator."}
+  };
 }
 async function moderationQueue(env,request){
   await requireModerator(request,env);
@@ -372,7 +463,8 @@ async function moderationQueue(env,request){
   return {queue:result.results || [],privacyRequests:privacyRequests.results || [],reports:reports.results || [],coordinationReviews:coordination.results || [],limit:50,disclosure:"Moderator-only queue. Do not copy private identity or exact-location fields into public notes."};
 }
 async function recordPrivacyRequestAction(env,request,input){
-  const moderatorFingerprint = await requireModerator(request,env);
+  const moderator = await requireModerator(request,env);
+  const moderatorFingerprint = moderator.fingerprint;
   if(!env.DB) throw accessError("Durable privacy storage is unavailable.",503);
   await ensurePrivacySchema(env);
   const requestId = requireText(input.requestId,"A privacy request",120);
@@ -383,10 +475,12 @@ async function recordPrivacyRequestAction(env,request,input){
   if(!current) throw new Error("Privacy request was not found.");
   const resolvedAt = status === "resolved" ? new Date().toISOString() : null;
   await env.DB.prepare("UPDATE privacy_requests SET status=?,resolution=?,resolved_at=?,resolved_by_fingerprint=? WHERE id=?").bind(status,resolution || null,resolvedAt,status === "resolved" ? moderatorFingerprint : null,requestId).run();
+  await completeModeratorTask(env,"privacy_request",requestId,moderatorFingerprint,status,resolvedAt || new Date().toISOString());
   return {requestId,status,resolvedAt};
 }
 async function recordModerationAction(env,request,input){
-  const moderatorFingerprint = await requireModerator(request,env);
+  const moderator = await requireModerator(request,env);
+  const moderatorFingerprint = moderator.fingerprint;
   if(!env.DB) throw accessError("Durable moderation storage is unavailable.",503);
   const happeningId = requireText(input.happeningId,"A happening",120);
   const decision = requireText(input.decision,"A moderation decision",20);
@@ -400,10 +494,12 @@ async function recordModerationAction(env,request,input){
     env.DB.prepare(`UPDATE happenings SET review_state=? WHERE id=?`).bind(reviewState,happeningId),
     env.DB.prepare(`INSERT INTO moderation_decisions (id,happening_id,decision,reason,moderator_fingerprint,created_at) VALUES (?,?,?,?,?,?)`).bind(crypto.randomUUID(),happeningId,decision,reason,moderatorFingerprint,createdAt)
   ]);
+  await completeModeratorTask(env,"happening",happeningId,moderatorFingerprint,decision,createdAt);
   return {happeningId,decision,reviewState,createdAt};
 }
 async function recordReportAction(env,request,input){
-  const moderatorFingerprint = await requireModerator(request,env);
+  const moderator = await requireModerator(request,env);
+  const moderatorFingerprint = moderator.fingerprint;
   if(!env.DB) throw accessError("Durable moderation storage is unavailable.",503);
   const reportId = requireText(input.reportId,"A moderation report",120);
   const status = requireText(input.status || "resolved","A report status",20);
@@ -417,6 +513,7 @@ async function recordReportAction(env,request,input){
   if(status === "resolved" && (current.reason === "correction" || current.reason === "appeal") && String(current.target_id).startsWith("public-")){
     await env.DB.prepare("INSERT INTO correction_history (id,history_type,public_story_id,summary,review_state,created_at,resolved_at,resolved_by_fingerprint) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),current.reason,current.target_id,resolution,"approved",new Date().toISOString(),resolvedAt,moderatorFingerprint).run();
   }
+  await completeModeratorTask(env,"report",reportId,moderatorFingerprint,status,resolvedAt || new Date().toISOString());
   return {reportId,status,reviewState,resolvedAt};
 }
 async function deskItems(env,request){
@@ -535,6 +632,22 @@ async function handleApi(request,env,ctx){
   if(url.pathname === "/api/moderation/status" && request.method === "GET"){
     try { return jsonResponse(await moderationStatus(env)); }
     catch(error){ return jsonResponse({error:error.message || "Moderation status is unavailable."},error.message === "Durable moderation storage is unavailable." ? 503 : 400); }
+  }
+  if(url.pathname === "/api/moderation/verify" && request.method === "POST"){
+    try { const moderator = await requireModerator(request,env); return jsonResponse({verified:true,verificationLevel:moderator.verificationLevel,expiresAt:moderator.expiresAt,publicIdentity:"anonymous"}); }
+    catch(error){ return jsonResponse({error:error.message || "Moderator verification failed."},error.status || 401); }
+  }
+  if(url.pathname === "/api/moderation/metrics" && request.method === "GET"){
+    try { return jsonResponse(await moderatorMetrics(env,request,url)); }
+    catch(error){ return jsonResponse({error:error.message || "Moderator metrics are unavailable."},error.status || 400); }
+  }
+  if(url.pathname === "/api/moderation/tasks" && request.method === "POST"){
+    try { return jsonResponse({ok:true,task:await moderationTask(env,request,await readJson(request))},200); }
+    catch(error){ return jsonResponse({error:error.message || "Moderator task action was rejected."},error.status || 400); }
+  }
+  if(url.pathname === "/api/moderation/quality" && request.method === "POST"){
+    try { return jsonResponse({ok:true,review:await moderatorQuality(env,request,await readJson(request))},202); }
+    catch(error){ return jsonResponse({error:error.message || "Moderator quality review was rejected."},error.status || 400); }
   }
   if(url.pathname === "/api/happenings" && request.method === "GET"){
     try { return jsonResponse(await publicHappenings(env,url),200,{"cache-control":"public, max-age=15, s-maxage=15"}); }

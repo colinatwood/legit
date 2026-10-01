@@ -24,9 +24,13 @@ Allow time for confirmation and remediation before public disclosure. Legit cont
 - Public reports and correction requests are stored as pending moderation records; resolution history is append-oriented and public output contains only sanitized summaries.
 - Signed-in desk items are owned by an opaque profile hash and are included in export/deletion controls; anonymous desk state stays device-local.
 - Moderator routes fail closed when `MODERATOR_TOKEN` is absent and never expose the token to browser code.
+- Moderator verification can require both `MODERATOR_TOKEN` and `MODERATOR_VERIFICATION_SECRET`; an optional fingerprint allowlist can restrict which verified credentials are active.
+- Moderator task claims, response time, quality reviews, and illegitimate-bounce counts are stored without public moderator identities. A reversed `hold` or `flag` is the defined illegitimate-bounce outcome.
+- Moderator metrics return only the current moderator's own metrics, aggregate team totals, and daily trend buckets; no stable public moderator alias is emitted.
 - Database schema changes are migration-owned; the Worker does not create or alter production tables at request time.
 - Retention cleanup runs on API traffic and is also exposed through a scheduled Worker handler; a production Cron Trigger must be attached before no-traffic cleanup is treated as guaranteed.
 - Moderation decisions are append-only and record a pseudonymous moderator fingerprint.
+- The moderator fingerprint is derived from the credential only; moderator IP and user-agent values are not stored in the moderator task, quality, or verification tables.
 - The external Leaflet map assets are version-pinned and loaded with Subresource Integrity checks.
 - Browser responses include baseline clickjacking, MIME-sniffing, referrer, permissions, transport, and Content Security Policy protections.
 

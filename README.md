@@ -117,6 +117,14 @@ Reputation is awarded by server-side events, not by the number of posts or votes
 
 The fingerprint is a truncated, pseudonymous abuse-control correlation value derived server-side; raw network identifiers are not shown in the ledger or returned to the browser.
 
+## Moderator safety and accountability framework
+
+Moderator access is fail-closed and supports a second verification secret through `MODERATOR_VERIFICATION_SECRET`, an optional fingerprint allowlist through `MODERATOR_FINGERPRINT_ALLOWLIST`, and short-lived verification records. The API never returns a moderator name, email, stable public alias, raw credential, IP address, or user agent.
+
+Moderator tasks can be claimed and released through `/api/moderation/tasks`. Decisions close the task and record response time. `/api/moderation/metrics` reports only the authenticated moderator's workload plus aggregate team totals and daily trends. A quality reviewer can record an append-only `upheld`, `reversed`, or `inconclusive` outcome through `/api/moderation/quality`; a reversed `hold` or `flag` is counted as an illegitimate bounce. The system prevents a moderator from reviewing their own decision.
+
+This creates accountability without exposing moderators to the public. The service stores only one-way credential fingerprints and rotating verification timestamps; hosting-provider security logs remain outside the application’s control.
+
 ## Run locally
 
 For a UI-only preview, open `dist/index.html` in a browser or serve the repository with any static server:
@@ -146,4 +154,4 @@ See [SECURITY.md](./SECURITY.md) for the reporting process and current security 
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+Apache-2.0. See [LICENSE](./LICENSE).
