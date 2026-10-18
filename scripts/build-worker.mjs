@@ -5,7 +5,8 @@ const root = process.cwd();
 const files = {
   "index.html": ["dist/index.html","text/html; charset=utf-8"],
   "styles.css": ["dist/styles.css","text/css; charset=utf-8"],
-  "app.js": ["dist/app.js","text/javascript; charset=utf-8"]
+  "app.js": ["dist/app.js","text/javascript; charset=utf-8"],
+  "sw.js": ["dist/sw.js","text/javascript; charset=utf-8"]
 };
 const assets = {};
 for(const [name,[relative,type]] of Object.entries(files)) assets[name] = {body:await readFile(path.join(root,relative),"utf8"),type};

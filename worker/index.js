@@ -21,7 +21,7 @@ const securityHeaders = {
   "cross-origin-resource-policy":"same-origin",
   "x-permitted-cross-domain-policies":"none",
   "strict-transport-security":"max-age=31536000; includeSubDomains",
-  "content-security-policy":"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; style-src-attr 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://unpkg.com https://*.tile.openstreetmap.org https://*.openstreetmap.org; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; upgrade-insecure-requests"
+  "content-security-policy":"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: https://unpkg.com https://*.tile.openstreetmap.org https://*.openstreetmap.org; connect-src 'self' https://unpkg.com; upgrade-insecure-requests"
 };
 const jsonHeaders = {...securityHeaders,"content-type":"application/json; charset=utf-8","cache-control":"no-store"};
 const policy = {
@@ -57,6 +57,14 @@ const durableWriteLimits = {
 };
 
 function jsonResponse(body,status=200,extraHeaders={}){ return new Response(JSON.stringify(body),{status,headers:{...jsonHeaders,...extraHeaders}}); }
+async function cachedJsonResponse(body,request,status=200,extraHeaders={}){
+  const serialized=JSON.stringify(body);
+  const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(serialized));
+  const etag='"'+[...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,"0")).join("").slice(0,32)+'"';
+  const headers={...jsonHeaders,...extraHeaders,etag,"cache-control":"public, max-age=30, s-maxage=30, stale-while-revalidate=120"};
+  if(request.headers.get("if-none-match") === etag) return new Response(null,{status:304,headers});
+  return new Response(serialized,{status,headers});
+}
 function textResponse(body,type){ return new Response(body,{headers:{...securityHeaders,"content-type":type,"cache-control":"no-cache"}}); }
 function sanitizeText(value,max=1000){
   return (typeof value === "string" ? value : "")
@@ -665,7 +673,7 @@ async function handleApi(request,env,ctx){
     catch(error){ return jsonResponse({error:error.message || "Moderator quality review was rejected."},error.status || 400); }
   }
   if(url.pathname === "/api/happenings" && request.method === "GET"){
-    try { return jsonResponse(await publicHappenings(env,url),200,{"cache-control":"public, max-age=15, s-maxage=15"}); }
+    try { return await cachedJsonResponse(await publicHappenings(env,url),request,200); }
     catch(error){ return jsonResponse({error:error.message || "Public happenings are unavailable."},error.status || (error.message === "Durable public reporting storage is unavailable." ? 503 : 400)); }
   }
   if(url.pathname === "/api/moderation/queue" && request.method === "GET"){

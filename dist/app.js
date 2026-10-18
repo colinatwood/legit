@@ -20,6 +20,8 @@ let mapMarkers = [];
 let postCounter = 0;
 let publicLoadController = null;
 let publicLoadTimer = null;
+let publicEtag = null;
+let mapLoadStarted = false;
 const refineFilters = {time:"today",legitimacy:"all",balance:"all",importance:"all"};
 const userState = {points:128};
 const accessibilityKey = "legit-accessibility";
@@ -75,8 +77,12 @@ async function loadPublicHappenings(){
   const controller = new AbortController();
   publicLoadController = controller;
   try{
-    const response=await fetch(`/api/happenings?time=${encodeURIComponent(refineFilters.time)}`,{headers:{accept:"application/json"},signal:controller.signal});
+    const headers={accept:"application/json"};
+    if(publicEtag) headers["if-none-match"]=publicEtag;
+    const response=await fetch(`/api/happenings?time=${encodeURIComponent(refineFilters.time)}`,{headers,signal:controller.signal});
+    if(response.status === 304){ setDataStatus("Live · no changes", "live"); return; }
     if(!response.ok){ setDataStatus("Using last known map data","stale"); return; }
+    publicEtag=response.headers.get("etag") || null;
     const data=await response.json();
     const serverItems=(data.happenings || []).map(mapServerHappening);
     const serverIds=new Set(serverItems.map(item => item.serverId));
@@ -162,10 +168,15 @@ function bindMarkerPress(marker,item,pressState){
   });
 }
 function renderMarkers(){
-  if(!map) return;
-  mapMarkers.forEach(marker => marker.remove());
-  mapMarkers=visibleHappenings().map(item => { const marker=L.marker([item.publicLat,item.publicLng],{icon:L.divIcon({className:"leaflet-marker-shell",html:markerElement(item).outerHTML,iconSize:[125,70],iconAnchor:[62,35]})}).addTo(map); const pressState={pointerId:null,held:false,suppressUntil:0}; bindMarkerPress(marker,item,pressState); marker.on("click",event => { if(pressState.suppressUntil>Date.now()){ pressState.suppressUntil=0; return; } L.DomEvent.stopPropagation(event); openMini(item); }); marker.on("contextmenu",event => { L.DomEvent.stopPropagation(event); event.originalEvent.preventDefault(); openActions(item,event.originalEvent.clientX,event.originalEvent.clientY); }); return marker; });
-  document.getElementById("signalCount").textContent=`${visibleHappenings().length} signals`;
+  const visible=visibleHappenings();
+  if(map){
+    mapMarkers.forEach(marker => marker.remove());
+    mapMarkers=visible.map(item => { const marker=L.marker([item.publicLat,item.publicLng],{icon:L.divIcon({className:"leaflet-marker-shell",html:markerElement(item).outerHTML,iconSize:[125,70],iconAnchor:[62,35]})}).addTo(map); const pressState={pointerId:null,held:false,suppressUntil:0}; bindMarkerPress(marker,item,pressState); marker.on("click",event => { if(pressState.suppressUntil>Date.now()){ pressState.suppressUntil=0; return; } L.DomEvent.stopPropagation(event); openMini(item); }); marker.on("contextmenu",event => { L.DomEvent.stopPropagation(event); event.originalEvent.preventDefault(); openActions(item,event.originalEvent.clientX,event.originalEvent.clientY); }); return marker; });
+  }
+  const signalList=document.getElementById("signalList");
+  signalList.innerHTML=visible.map(item => `<button class="signal-list-item" data-signal-id="${escapeHtml(item.id)}"><span class="signal-list-dot" style="background:${balanceColor(item.balance)}"></span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)} · ${item.score}% legit · impact ${item.impact}/5</small></span></button>`).join("");
+  signalList.querySelectorAll("[data-signal-id]").forEach(button => button.addEventListener("click",() => { const item=happenings.find(entry => String(entry.id) === button.dataset.signalId); if(item) openMini(item); }));
+  document.getElementById("signalCount").textContent=`${visible.length} signals`;
   const active=Object.entries(refineFilters).filter(([key,value]) => key === "time" ? value !== "today" : value !== "all").length; document.getElementById("filterCount").textContent=active ? `(${active})` : "";
 }
 function fillMini(item){
@@ -289,14 +300,25 @@ document.addEventListener("keydown",event => { const activeModal=document.queryS
 
 loadAccessibility(); applyAccessibility(); loadDesk();
 
-function initMap(){
-  if(!window.L) return; map=L.map("map",{zoomControl:false,attributionControl:true}).setView([43.665,-70.26],12.6); L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap contributors"}).addTo(map); L.control.zoom({position:"bottomright"}).addTo(map); map.on("click",() => { closeActions(); miniCard.hidden=true; }); map.on("contextmenu",event => { event.originalEvent.preventDefault(); closeActions(); miniCard.hidden=true; showToast("Right-click a marker to see event actions"); }); renderMarkers();
+function showMapFallback(){ document.getElementById("map").hidden=true; document.getElementById("signalList").hidden=false; setDataStatus("Text map · low bandwidth mode","stale"); renderMarkers(); }
+function loadLeaflet(){
+  if(mapLoadStarted) return;
+  mapLoadStarted=true;
+  const stylesheet=document.createElement("link"); stylesheet.rel="stylesheet"; stylesheet.href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; stylesheet.integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="; stylesheet.crossOrigin="anonymous"; document.head.appendChild(stylesheet);
+  const script=document.createElement("script"); script.src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; script.integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="; script.crossOrigin="anonymous";
+  const timeout=window.setTimeout(showMapFallback,7000);
+  script.onload=() => { window.clearTimeout(timeout); map=L.map("map",{zoomControl:false,attributionControl:true}).setView([43.665,-70.26],12.6); L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap contributors"}).addTo(map); L.control.zoom({position:"bottomright"}).addTo(map); map.on("click",() => { closeActions(); miniCard.hidden=true; }); map.on("contextmenu",event => { event.originalEvent.preventDefault(); closeActions(); miniCard.hidden=true; showToast("Right-click a marker to see event actions"); }); renderMarkers(); };
+  script.onerror=showMapFallback;
+  document.head.appendChild(script);
 }
-initMap();
+loadLeaflet();
 loadPublicHappenings();
 let refreshTimer=null;
-function scheduleLiveRefresh(){ window.clearTimeout(refreshTimer); refreshTimer=window.setTimeout(() => { if(document.visibilityState === "visible") loadPublicHappenings(); scheduleLiveRefresh(); },30000); }
+function refreshInterval(){ const connection=navigator.connection || navigator.mozConnection || navigator.webkitConnection; if(connection?.saveData || /slow-2g|2g/.test(connection?.effectiveType || "")) return 90000; if(connection?.effectiveType === "3g") return 60000; return 30000; }
+function scheduleLiveRefresh(){ window.clearTimeout(refreshTimer); refreshTimer=window.setTimeout(() => { if(document.visibilityState === "visible" && navigator.onLine !== false) loadPublicHappenings(); scheduleLiveRefresh(); },refreshInterval()); }
 document.addEventListener("visibilitychange",() => { if(document.visibilityState === "visible") loadPublicHappenings(); });
+window.addEventListener("online",() => loadPublicHappenings());
+if("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js",{scope:"./"}).catch(() => {});
 scheduleLiveRefresh();
 document.addEventListener("keydown",event => {
   if(actionMenu.hidden) return;

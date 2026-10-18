@@ -6,10 +6,6 @@
     <meta name="theme-color" content="#08131f" />
     <meta name="description" content="Legit is a privacy-aware map for local happenings and evidence trails." />
     <title>Legit — local happenings on one map</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -17,6 +13,7 @@
       <a class="skip-link" href="#map">Skip to map</a>
       <h1 class="sr-only">Legit local happenings map</h1>
       <div id="map" tabindex="0" aria-label="OpenStreetMap of aggregated local happenings"></div>
+      <section id="signalList" class="signal-list" hidden aria-label="Aggregated local happenings"></section>
       <div class="map-ui">
         <header class="topbar">
           <button class="brand brand-trigger" id="openAccount" type="button" aria-haspopup="dialog" aria-controls="accountModal" aria-label="Open account sign in"><span class="brand-mark">L</span><span>legit<span class="brand-dot">.</span></span></button>
@@ -62,6 +59,6 @@
       <section class="modal-backdrop" id="composerModal" hidden><article class="modal composer-modal" role="dialog" aria-modal="true" aria-labelledby="composerTitle"><button class="close-button" data-close="composerModal" aria-label="Close post form">×</button><div class="kicker">NEW LOCAL SIGNAL</div><h2 id="composerTitle">What are you seeing?</h2><p class="modal-copy">Post early. The map keeps uncertainty visible while people check the evidence.</p><form id="composerForm"><label>Short description<input required id="postTitle" maxlength="90" placeholder="e.g. Power is out on Congress Street" /></label><label>What happened?<textarea required id="postBody" rows="3" maxlength="420" placeholder="What did you see, and what is still uncertain?"></textarea></label><label>Public area<input required id="postLocation" placeholder="Neighborhood, street, or landmark" /></label><div class="form-row"><label>Topic<select id="postTopic"><option>Community</option><option>Public safety</option><option>Local government</option><option>Weather &amp; transit</option><option>Other</option></select></label><label>Map precision<select id="locationPrivacy"><option value="aggregate">Aggregated area · always on</option></select></label></div><label class="toggle-row"><input type="checkbox" id="anonymousToggle" checked /><span class="toggle-ui"></span><span>Post anonymously <small>recommended</small></span></label><label id="identityField" hidden>Display name<input id="postIdentity" maxlength="40" placeholder="Name or group" /></label><label>First source <span class="optional">optional</span><input id="postSource" type="url" placeholder="https://… or describe what you saw" /></label><div class="privacy-note">◌ New signals are filtered and stored with neighborhood-level location only. Exact pins are never stored.</div><div class="modal-actions"><button type="button" class="subtle-button" data-close="composerModal">Cancel</button><button type="submit" class="post-button">Post signal</button></div></form></article></section>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </main>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script><script src="./app.js"></script>
+    <script src="./app.js"></script>
   </body>
 </html>
