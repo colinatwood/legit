@@ -234,6 +234,7 @@ function runAction(action){
   if(action === "add"){ toggleDesk(item); return; }
   if(action === "full"){ openFull(item); return; }
   if(action === "useful"){ const evidence=item.evidence[0]; if(!evidence){ showToast("No evidence trail to upvote yet"); return; } recordEvidenceAssessment(item,{disabled:false,dataset:{evidenceId:evidence.id},textContent:"↑ useful"}); return; }
+  if(action === "verify"){ openReport(item); document.getElementById("reportReason").value="verification"; document.getElementById("reportDetails").placeholder="What evidence, source, or independent check should reviewers examine?"; return; }
   if(action === "report"){ openReport(item); }
 }
 function resetComposer(){ document.getElementById("composerForm").reset(); document.getElementById("identityField").hidden=true; document.getElementById("anonymousToggle").checked=true; document.getElementById("sensitiveToggle").checked=false; document.getElementById("locationPrivacy").value="aggregate"; }
@@ -295,6 +296,18 @@ document.getElementById("miniFull").addEventListener("click",() => { if(selected
 document.getElementById("detailAdd").addEventListener("click",() => { if(selectedHappening) toggleDesk(selectedHappening); });
 document.getElementById("detailUseful").addEventListener("click",() => { if(selectedHappening) runAction("useful"); });
 document.getElementById("detailReport").addEventListener("click",() => { if(selectedHappening) openReport(selectedHappening); });
+const detailActions=document.querySelector(".detail-actions");
+if(detailActions && !document.getElementById("detailVerify")){
+  const verifyButton=document.createElement("button"); verifyButton.className="subtle-button"; verifyButton.id="detailVerify"; verifyButton.textContent="✓ Request verification"; detailActions.insertBefore(verifyButton,document.getElementById("detailReport"));
+  verifyButton.addEventListener("click",() => { if(selectedHappening) runAction("verify"); });
+}
+const reportReason=document.getElementById("reportReason");
+[["verification","Request independent verification"],["coordination","Flag possible coordinated manipulation"],["source_conflict","Disclose a source conflict of interest"],["safety_privacy","Escalate a safety or privacy risk"]].forEach(([value,label]) => { if(!reportReason.querySelector(`option[value="${value}"]`)){ const option=document.createElement("option"); option.value=value; option.textContent=label; reportReason.appendChild(option); } });
+reportReason.addEventListener("change",event => { const placeholders={verification:"What evidence, source, or independent check should reviewers examine?",coordination:"Describe the pattern that may indicate coordinated manipulation.",source_conflict:"Describe the possible conflict without sharing private identity.",safety_privacy:"Describe the safety or privacy risk and what should be protected."}; document.getElementById("reportDetails").placeholder=placeholders[event.target.value] || "What should reviewers check?"; });
+const topicSelect=document.getElementById("postTopic");
+if(topicSelect){ const hint=document.createElement("p"); hint.className="privacy-line"; hint.id="safetyHint"; hint.hidden=true; hint.textContent="For people, homes, medical situations, or immediate safety concerns, enable “Potentially sensitive” to keep the map pin private."; topicSelect.parentElement.appendChild(hint); topicSelect.addEventListener("change",event => { hint.hidden=event.target.value !== "Public safety"; }); }
+const methodologyModal=document.getElementById("methodologyModal");
+if(methodologyModal && !methodologyModal.querySelector(".emergency-note")){ const note=document.createElement("p"); note.className="privacy-line emergency-note"; note.textContent="Legit is not an emergency service. For immediate danger, contact local emergency services."; methodologyModal.querySelector(".modal-copy")?.after(note); }
 document.getElementById("reportForm").addEventListener("submit",submitReport);
 document.getElementById("anonymousToggle").addEventListener("change",event => { document.getElementById("identityField").hidden=event.target.checked; if(event.target.checked) document.getElementById("postIdentity").value=""; });
 document.getElementById("locationPrivacy").addEventListener("change",event => { event.target.value="aggregate"; });

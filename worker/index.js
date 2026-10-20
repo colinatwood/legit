@@ -33,7 +33,10 @@ const policy = {
   identity:"anonymous by default; attributed display is opt-in",
   location:"all stored locations are rounded to neighborhood precision; exact pins are never stored",
   media:"uploads are never public at low legitimacy; the server receives metadata only until media review is complete",
-  review:"new happenings enter a private moderation queue before public display",
+  review:"new happenings, verification requests, appeals, and safety/privacy escalations enter a private moderation queue before public display",
+  harmPrevention:"Sensitive, potentially defamatory, personally identifying, or dangerous reports can be held off-map pending review",
+  geographicSafety:"Public coordinates are neighborhood-level; sensitive submissions store no public pin and exact pins are never public",
+  publicTransparency:"Legit may publish privacy-safe aggregate moderation metrics, correction rates, response times, appeals, and removal counts without identities or exact locations",
   retention:"unverified submissions receive a bounded retention window; verification events expire after 15 minutes, completed moderator tasks after 180 days, and quality reviews after 365 days",
   storage:"raw request bodies are discarded; identifying text is filtered before storage, and signed-in ownership and abuse controls use secret-backed HMAC fingerprints",
   sharing:"Legit does not sell or share personal information for cross-context behavioral advertising"
