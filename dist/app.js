@@ -186,6 +186,14 @@ function openMini(item){ selectedHappening=item; closeActions(); fillMini(item);
 function openActions(item,x,y,focusMenu=false){ selectedHappening=item; miniCard.hidden=true; document.getElementById("actionTitle").textContent=item.title; actionMenu.style.left=`${Math.min(Math.max(8,x),window.innerWidth-240)}px`; actionMenu.style.top=`${Math.min(Math.max(74,y),window.innerHeight-250)}px`; actionMenu.hidden=false; if(focusMenu) actionMenu.querySelector("[data-action]")?.focus(); }
 function closeActions(){ actionMenu.hidden=true; }
 function showToast(message){ toast.textContent=message; toast.classList.add("show"); clearTimeout(showToast.timer); showToast.timer=setTimeout(() => toast.classList.remove("show"),2600); }
+async function loadTransparencySummary(){
+  const host=document.getElementById("transparencySummary"); if(!host || host.dataset.loaded === "true") return;
+  host.textContent="Loading privacy-safe review counts…";
+  try{
+    const response=await fetch("/api/moderation/status",{headers:{accept:"application/json"}}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Review counts unavailable.");
+    const summary=data.publicSummary || {}; host.innerHTML=`<strong>Public review snapshot</strong><span>${Number(summary.cleared || 0)} cleared · ${Number(summary.pending || 0)} pending · ${Number(summary.flagged || 0)} flagged</span><small>${escapeHtml(data.disclosure || "Counts only; no identities or exact locations are shown.")}</small>`; host.dataset.loaded="true";
+  }catch(error){ host.textContent="Privacy-safe review counts are temporarily unavailable."; }
+}
 function showModal(id){ const modal=document.getElementById(id); lastFocusedElement=document.activeElement; modal.hidden=false; const focusable=modal.querySelector("button,a[href],input,select,textarea,[tabindex]:not([tabindex='-1'])"); focusable?.focus(); }
 function closeModal(id){ const modal=document.getElementById(id); modal.hidden=true; if(id === "accessibilityPanel") document.getElementById("openAccessibility").setAttribute("aria-expanded","false"); if(lastFocusedElement && typeof lastFocusedElement.focus === "function") lastFocusedElement.focus(); }
 function populateDetail(item){
@@ -269,7 +277,7 @@ async function deleteAllProfileData(){
   try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"delete_all"})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Profile data could not be deleted."); localStorage.removeItem(accessibilityKey); setProfileControls(true,{controls:{optOutSharing:true,limitSensitive:true},dataSummary:{happenings:0,pending:0,reputationEvents:0}}); summary.textContent=`Deleted ${data.deletion?.deletedHappenings || 0} profile-linked happening${data.deletion?.deletedHappenings === 1 ? "" : "s"} and ${data.deletion?.deletedReputationEvents || 0} reputation event${data.deletion?.deletedReputationEvents === 1 ? "" : "s"}.`; showToast("All profile-linked data was deleted"); }catch(error){ summary.textContent=error.message || "Profile data could not be deleted."; button.disabled=false; }
 }
 
-document.getElementById("openMethodology").addEventListener("click",() => { closeActions(); showModal("methodologyModal"); });
+document.getElementById("openMethodology").addEventListener("click",() => { closeActions(); showModal("methodologyModal"); loadTransparencySummary(); });
 document.getElementById("dismissWelcome").addEventListener("click",() => { try{ localStorage.setItem("legit-welcome-seen","1"); }catch{} closeModal("welcomeModal"); });
 document.getElementById("openFilters").addEventListener("click",() => { closeActions(); document.getElementById("filterPanel").hidden=!document.getElementById("filterPanel").hidden; });
 document.getElementById("openComposer").addEventListener("click",() => { closeActions(); showModal("composerModal"); });
