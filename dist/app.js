@@ -242,6 +242,7 @@ function runAction(action){
   if(action === "add"){ toggleDesk(item); return; }
   if(action === "full"){ openFull(item); return; }
   if(action === "useful"){ const evidence=item.evidence[0]; if(!evidence){ showToast("No evidence trail to upvote yet"); return; } recordEvidenceAssessment(item,{disabled:false,dataset:{evidenceId:evidence.id},textContent:"↑ useful"}); return; }
+  if(action === "evidence"){ openReport(item); document.getElementById("reportReason").value="evidence"; document.getElementById("reportDetails").placeholder="Paste a public source link or describe what you observed. Do not include private personal information."; return; }
   if(action === "verify"){ openReport(item); document.getElementById("reportReason").value="verification"; document.getElementById("reportDetails").placeholder="What evidence, source, or independent check should reviewers examine?"; return; }
   if(action === "report"){ openReport(item); }
 }
@@ -306,12 +307,14 @@ document.getElementById("detailUseful").addEventListener("click",() => { if(sele
 document.getElementById("detailReport").addEventListener("click",() => { if(selectedHappening) openReport(selectedHappening); });
 const detailActions=document.querySelector(".detail-actions");
 if(detailActions && !document.getElementById("detailVerify")){
+  const evidenceButton=document.createElement("button"); evidenceButton.className="subtle-button"; evidenceButton.id="detailEvidence"; evidenceButton.textContent="＋ Add evidence"; detailActions.insertBefore(evidenceButton,document.getElementById("detailVerify"));
+  evidenceButton.addEventListener("click",() => { if(selectedHappening) runAction("evidence"); });
   const verifyButton=document.createElement("button"); verifyButton.className="subtle-button"; verifyButton.id="detailVerify"; verifyButton.textContent="✓ Request verification"; detailActions.insertBefore(verifyButton,document.getElementById("detailReport"));
   verifyButton.addEventListener("click",() => { if(selectedHappening) runAction("verify"); });
 }
 const reportReason=document.getElementById("reportReason");
-[["verification","Request independent verification"],["coordination","Flag possible coordinated manipulation"],["source_conflict","Disclose a source conflict of interest"],["safety_privacy","Escalate a safety or privacy risk"]].forEach(([value,label]) => { if(!reportReason.querySelector(`option[value="${value}"]`)){ const option=document.createElement("option"); option.value=value; option.textContent=label; reportReason.appendChild(option); } });
-reportReason.addEventListener("change",event => { const placeholders={verification:"What evidence, source, or independent check should reviewers examine?",coordination:"Describe the pattern that may indicate coordinated manipulation.",source_conflict:"Describe the possible conflict without sharing private identity.",safety_privacy:"Describe the safety or privacy risk and what should be protected."}; document.getElementById("reportDetails").placeholder=placeholders[event.target.value] || "What should reviewers check?"; });
+[["evidence","Add a source or relevant evidence"],["verification","Request independent verification"],["coordination","Flag possible coordinated manipulation"],["source_conflict","Disclose a source conflict of interest"],["safety_privacy","Escalate a safety or privacy risk"]].forEach(([value,label]) => { if(!reportReason.querySelector(`option[value="${value}"]`)){ const option=document.createElement("option"); option.value=value; option.textContent=label; reportReason.appendChild(option); } });
+reportReason.addEventListener("change",event => { const placeholders={evidence:"Paste a public source link or describe what you observed. Do not include private personal information.",verification:"What evidence, source, or independent check should reviewers examine?",coordination:"Describe the pattern that may indicate coordinated manipulation.",source_conflict:"Describe the possible conflict without sharing private identity.",safety_privacy:"Describe the safety or privacy risk and what should be protected."}; document.getElementById("reportDetails").placeholder=placeholders[event.target.value] || "What should reviewers check?"; });
 const topicSelect=document.getElementById("postTopic");
 if(topicSelect){ const hint=document.createElement("p"); hint.className="privacy-line"; hint.id="safetyHint"; hint.hidden=true; hint.textContent="For people, homes, medical situations, or immediate safety concerns, enable “Potentially sensitive” to keep the map pin private."; topicSelect.parentElement.appendChild(hint); topicSelect.addEventListener("change",event => { hint.hidden=event.target.value !== "Public safety"; }); }
 const methodologyModal=document.getElementById("methodologyModal");
