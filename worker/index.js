@@ -223,7 +223,8 @@ async function persistReport(env,input,request){
   if(!env.DB) throw new Error("Durable moderation storage is unavailable.");
   const targetId = requireText(input.targetId,"A target",160);
   const reason = requireText(input.reason,"A reason",40).toLowerCase();
-  const details = sanitizeText(input.details,500);
+  const source = reason === "evidence" ? aggregateSource(input.source) : "";
+  const details = sanitizeText(`${source ? `Public source: ${source}\n` : ""}${input.details}`,500);
   const targetType = input.targetType || "happening";
   if(!["happening","claim","evidence"].includes(targetType)) throw new Error("This report target is not supported.");
   const createdAt = new Date().toISOString();
