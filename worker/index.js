@@ -26,6 +26,10 @@ const securityHeaders = {
 const jsonHeaders = {...securityHeaders,"content-type":"application/json; charset=utf-8","cache-control":"no-store"};
 const policy = {
   version:"privacy-moderation-v2",
+  legitimacy:"evidence alignment only; independent approved sources, evidence trails, useful-evidence assessments, and correction history contribute; popularity and raw post volume do not",
+  balance:"descriptive reported perspective, not truth or endorsement; blue indicates a left angle, red a right angle, and purple agnostic or mixed framing",
+  importance:"potential impact and urgency, not certainty",
+  manipulation:"duplicate, daily-cap, story-level, and coordination checks limit brigading; coordinated assessment bursts are held for review",
   identity:"anonymous by default; attributed display is opt-in",
   location:"all stored locations are rounded to neighborhood precision; exact pins are never stored",
   media:"uploads are never public at low legitimacy; the server receives metadata only until media review is complete",
@@ -178,15 +182,16 @@ function normalizeHappening(input){
   const shareIdentity = input.identityVisibility === "attributed" && Boolean(sanitizeText(input.displayIdentity,40));
   const lat = finiteCoordinate(input.lat,-90,90);
   const lng = finiteCoordinate(input.lng,-180,180);
-  const publicLat = lat == null ? null : publicCoordinate(lat);
-  const publicLng = lng == null ? null : publicCoordinate(lng);
+  const sensitive = Boolean(input.sensitive);
+  const publicLat = sensitive || lat == null ? null : publicCoordinate(lat);
+  const publicLng = sensitive || lng == null ? null : publicCoordinate(lng);
   const attachmentCount = Array.isArray(input.attachments) ? Math.min(input.attachments.length,10) : 0;
   return {
     id: crypto.randomUUID(),
     title,body,location,
     topic: requireText(input.topic || "Other","Topic",40),
     publicLat,publicLng,
-    locationPrecision:"aggregate",
+    locationPrecision:sensitive ? "aggregate-sensitive-no-pin" : "aggregate",
     identityVisibility: shareIdentity ? "attributed" : "anonymous",
     identityDisplay: shareIdentity ? sanitizeText(input.displayIdentity,40) : null,
     attachmentCount,
