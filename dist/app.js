@@ -191,7 +191,7 @@ async function loadTransparencySummary(){
   host.textContent="Loading privacy-safe review counts…";
   try{
     const response=await fetch("/api/moderation/status",{headers:{accept:"application/json"}}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Review counts unavailable.");
-    const summary=data.publicSummary || {}; host.innerHTML=`<strong>Public review snapshot</strong><span>${Number(summary.cleared || 0)} cleared · ${Number(summary.pending || 0)} pending · ${Number(summary.flagged || 0)} flagged</span><small>${escapeHtml(data.disclosure || "Counts only; no identities or exact locations are shown.")}</small>`; host.dataset.loaded="true";
+    const summary=data.publicSummary || {}; host.innerHTML=`<strong>Public review snapshot</strong><span>${Number(summary.cleared || 0)} cleared · ${Number(summary.pending || 0)} pending · ${Number(summary.flagged || 0)} flagged</span><span>Last 30 days: ${Number(summary.reviewedLast30Days || 0)} reviewed · ${Number(summary.clearedLast30Days || 0)} cleared · ${Number(summary.flaggedLast30Days || 0)} flagged · ${Number(summary.heldLast30Days || 0)} held</span><small>${escapeHtml(data.disclosure || "Counts only; no identities or exact locations are shown.")}</small>`; host.dataset.loaded="true";
   }catch(error){ host.textContent="Privacy-safe review counts are temporarily unavailable."; }
 }
 function showModal(id){ const modal=document.getElementById(id); lastFocusedElement=document.activeElement; modal.hidden=false; const focusable=modal.querySelector("button,a[href],input,select,textarea,[tabindex]:not([tabindex='-1'])"); focusable?.focus(); }

@@ -73,6 +73,12 @@ assert.equal(publicBody.happenings[0].sourceCount,1);
 assert.equal(publicBody.happenings[0].evidence.length,1);
 assert.match(publicBody.happenings[0].evidence[0].provenance,/example\.com\/record$/);
 
+const publicModerationStatus = await requestWithEnv("/api/moderation/status",{},databaseEnv);
+assert.equal(publicModerationStatus.status,200);
+const publicModerationBody = await publicModerationStatus.json();
+assert.equal(publicModerationBody.publicSummary.reviewedLast30Days,0);
+assert.match(publicModerationBody.disclosure,/last 30 days/i);
+
 const report = await requestWithEnv("/api/reports",{method:"POST",headers:{origin,"content-type":"application/json","CF-Connecting-IP":"reporter"},body:JSON.stringify({targetType:"happening",targetId:publicBody.happenings[0].id,reason:"correction",details:"The time in the primary claim needs review."})},databaseEnv);
 assert.equal(report.status,202);
 const unsupportedReport = await requestWithEnv("/api/reports",{method:"POST",headers:{origin,"content-type":"application/json","CF-Connecting-IP":"reporter"},body:JSON.stringify({targetType:"happening",targetId:publicBody.happenings[0].id,reason:"admin_override",details:"Should never be accepted."})},databaseEnv);

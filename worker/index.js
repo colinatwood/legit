@@ -285,14 +285,16 @@ async function moderationStatus(env){
   const privacyRequests = await env.DB.prepare(`SELECT COUNT(*) AS total FROM privacy_requests WHERE status='pending'`).first();
   const corrections = await env.DB.prepare(`SELECT COUNT(*) AS total FROM moderation_reports WHERE review_state='pending' AND reason IN ('correction','appeal')`).first();
   const coordination = await env.DB.prepare(`SELECT COUNT(DISTINCT target_id) AS total FROM reputation_events WHERE risk_state='coordination_review'`).first();
-  const summary = {pending:0,cleared:0,flagged:0,privateMedia:Number(media?.total || 0),pendingEvidence:Number(evidence?.total || 0),pendingReports:Number(reports?.total || 0),pendingCorrections:Number(corrections?.total || 0),pendingPrivacyRequests:Number(privacyRequests?.total || 0),coordinationReviews:Number(coordination?.total || 0)};
+  const reviewSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const recentReviews = await env.DB.prepare(`SELECT COUNT(*) AS total, SUM(CASE WHEN decision='approve' THEN 1 ELSE 0 END) AS cleared, SUM(CASE WHEN decision='flag' THEN 1 ELSE 0 END) AS flagged, SUM(CASE WHEN decision='hold' THEN 1 ELSE 0 END) AS held FROM moderation_decisions WHERE created_at>=?`).bind(reviewSince).first();
+  const summary = {pending:0,cleared:0,flagged:0,privateMedia:Number(media?.total || 0),pendingEvidence:Number(evidence?.total || 0),pendingReports:Number(reports?.total || 0),pendingCorrections:Number(corrections?.total || 0),pendingPrivacyRequests:Number(privacyRequests?.total || 0),coordinationReviews:Number(coordination?.total || 0),reviewedLast30Days:Number(recentReviews?.total || 0),clearedLast30Days:Number(recentReviews?.cleared || 0),flaggedLast30Days:Number(recentReviews?.flagged || 0),heldLast30Days:Number(recentReviews?.held || 0)};
   for(const row of states.results || []){
     const count = Number(row.total || 0);
     if(row.review_state === "pending") summary.pending += count;
     else if(row.review_state === "cleared" || row.review_state === "approved") summary.cleared += count;
     else summary.flagged += count;
   }
-  return {policyVersion:policy.version,publicSummary:summary,disclosure:"Counts only; identities, exact locations, private media, and report text stay out of this public endpoint."};
+  return {policyVersion:policy.version,publicSummary:summary,disclosure:"Counts only; identities, exact locations, private media, and report text stay out of this public endpoint. Review activity covers the last 30 days."};
 }
 function publicWindow(windowName){
   const now = Date.now();
