@@ -1,4 +1,4 @@
-const SHELL_CACHE = "legit-shell-v1";
+const SHELL_CACHE = "legit-shell-v51";
 const DATA_CACHE = "legit-data-v1";
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./sw.js"];
 
