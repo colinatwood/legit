@@ -190,6 +190,7 @@ function normalizeHappening(input){
   const lat = finiteCoordinate(input.lat,-90,90);
   const lng = finiteCoordinate(input.lng,-180,180);
   const sensitive = Boolean(input.sensitive);
+  const balance = ["left","right","agnostic"].includes(input.balance) ? input.balance : "agnostic";
   const publicLat = sensitive || lat == null ? null : publicCoordinate(lat);
   const publicLng = sensitive || lng == null ? null : publicCoordinate(lng);
   const attachmentCount = Array.isArray(input.attachments) ? Math.min(input.attachments.length,10) : 0;
@@ -203,6 +204,7 @@ function normalizeHappening(input){
     identityDisplay: shareIdentity ? sanitizeText(input.displayIdentity,40) : null,
     attachmentCount,
     attachmentState: attachmentCount ? "private_review" : "none",
+    balance,
     reviewState:"pending",
     createdAt:new Date().toISOString(),
     retentionUntil:retentionDate(),
@@ -215,7 +217,7 @@ async function persistHappening(env,item,request){
   const owner = hasAuthenticatedPrincipal(request) ? await ownerKey(env,request) : null;
   const claimId = `claim-${item.id}`;
   const statements = [
-    env.DB.prepare(`INSERT INTO happenings (id,title,body,topic,public_location,public_lat,public_lng,location_precision,identity_visibility,identity_display,impact,balance,legitimacy_score,review_state,attachment_state,attachment_count,created_at,retention_until,owner_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(item.id,item.title,item.body,item.topic,item.location,item.publicLat,item.publicLng,item.locationPrecision,item.identityVisibility,item.identityDisplay,1,"agnostic",0,item.reviewState,item.attachmentState,item.attachmentCount,item.createdAt,item.retentionUntil,owner),
+    env.DB.prepare(`INSERT INTO happenings (id,title,body,topic,public_location,public_lat,public_lng,location_precision,identity_visibility,identity_display,impact,balance,legitimacy_score,review_state,attachment_state,attachment_count,created_at,retention_until,owner_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(item.id,item.title,item.body,item.topic,item.location,item.publicLat,item.publicLng,item.locationPrecision,item.identityVisibility,item.identityDisplay,1,item.balance,0,item.reviewState,item.attachmentState,item.attachmentCount,item.createdAt,item.retentionUntil,owner),
     env.DB.prepare(`INSERT INTO claims (id,happening_id,text,status,attribution,created_at) VALUES (?,?,?,?,?,?)`).bind(claimId,item.id,item.body,"unverified","Queued through the server-side privacy and moderation gate.",item.createdAt)
   ];
   if(item.source){
