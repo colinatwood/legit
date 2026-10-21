@@ -51,6 +51,10 @@ const reputationRules = {
   duplicateRule:"one assessment per actor fingerprint, action, target, and story",
   excluded:"raw post volume, popularity, and agreement with a claim"
 };
+const reportReasons = new Set([
+  "correction","appeal","source_issue","privacy","safety",
+  "evidence","verification","coordination","source_conflict","safety_privacy"
+]);
 const durableWriteLimits = {
   "/api/happenings":4,
   "/api/reports":6,
@@ -223,6 +227,7 @@ async function persistReport(env,input,request){
   if(!env.DB) throw new Error("Durable moderation storage is unavailable.");
   const targetId = requireText(input.targetId,"A target",160);
   const reason = requireText(input.reason,"A reason",40).toLowerCase();
+  if(!reportReasons.has(reason)) throw new Error("This review request type is not supported.");
   const source = reason === "evidence" ? aggregateSource(input.source) : "";
   const details = sanitizeText(`${source ? `Public source: ${source}\n` : ""}${input.details}`,500);
   const targetType = input.targetType || "happening";
@@ -571,9 +576,9 @@ async function privacyProfile(env,request){
   await ensurePrivacySchema(env);
   const preference = await env.DB.prepare("SELECT opt_out_sharing,limit_sensitive,updated_at FROM privacy_preferences WHERE owner_key=? LIMIT 1").bind(key).first();
   const summary = await env.DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN review_state='pending' THEN 1 ELSE 0 END) AS pending FROM happenings WHERE owner_key=?").bind(key).first();
-  const reputation = await env.DB.prepare("SELECT COUNT(*) AS total FROM reputation_events WHERE owner_key=?").bind(key).first();
+  const reputation = await env.DB.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(points_awarded),0) AS points FROM reputation_events WHERE owner_key=?").bind(key).first();
   const desk = await env.DB.prepare("SELECT COUNT(*) AS total FROM desk_items WHERE owner_key=?").bind(key).first();
-  return {authenticated:true,controls:{aggregateOnly:true,optOutSharing:true,limitSensitive:preference ? Boolean(preference.limit_sensitive) : true,updatedAt:preference?.updated_at || null},dataSummary:{happenings:Number(summary?.total || 0),pending:Number(summary?.pending || 0),reputationEvents:Number(reputation?.total || 0),deskItems:Number(desk?.total || 0)},disclosure:"Only sanitized, neighborhood-level records linked to this signed-in profile are included. Legit never sells or shares personal information. Anonymous contributions and anonymous abuse-prevention fingerprints are not linked to a profile."};
+  return {authenticated:true,controls:{aggregateOnly:true,optOutSharing:true,limitSensitive:preference ? Boolean(preference.limit_sensitive) : true,updatedAt:preference?.updated_at || null},dataSummary:{happenings:Number(summary?.total || 0),pending:Number(summary?.pending || 0),reputationEvents:Number(reputation?.total || 0),reputationPoints:Number(reputation?.points || 0),deskItems:Number(desk?.total || 0)},disclosure:"Only sanitized, neighborhood-level records linked to this signed-in profile are included. Legit never sells or shares personal information. Anonymous contributions and anonymous abuse-prevention fingerprints are not linked to a profile."};
 }
 async function exportPrivacyData(env,request){
   const key = await ownerKey(env,request);

@@ -204,7 +204,8 @@ function populateDetail(item){
   document.querySelectorAll(".tiny-useful").forEach(button => button.addEventListener("click",event => { event.stopPropagation(); recordEvidenceAssessment(item,button); }));
 }
 function openFull(item){ selectedHappening=item; closeActions(); miniCard.hidden=true; populateDetail(item); showModal("detailModal"); }
-function openReport(item){ selectedHappening=item; closeActions(); miniCard.hidden=true; document.getElementById("reportTitle").textContent=`Report or correct: ${item.title}`; document.getElementById("reportDetails").value=""; const reason=document.getElementById("reportReason"); reason.value="correction"; reason.dispatchEvent(new Event("change")); if(document.getElementById("evidenceSource")) document.getElementById("evidenceSource").value=""; showModal("reportModal"); }
+function selectReportReason(value){ const reason=document.getElementById("reportReason"); reason.value=value; reason.dispatchEvent(new Event("change")); }
+function openReport(item){ selectedHappening=item; closeActions(); miniCard.hidden=true; document.getElementById("reportTitle").textContent=`Report or correct: ${item.title}`; document.getElementById("reportDetails").value=""; selectReportReason("correction"); if(document.getElementById("evidenceSource")) document.getElementById("evidenceSource").value=""; showModal("reportModal"); }
 async function recordEvidenceAssessment(item,button){
   if(button.disabled) return; button.disabled=true;
   const evidenceId=button.dataset.evidenceId || item.evidence[0]?.id; if(!evidenceId){ showToast("No evidence trail to upvote yet"); button.disabled=false; return; }
@@ -242,8 +243,8 @@ function runAction(action){
   if(action === "add"){ toggleDesk(item); return; }
   if(action === "full"){ openFull(item); return; }
   if(action === "useful"){ const evidence=item.evidence[0]; if(!evidence){ showToast("No evidence trail to upvote yet"); return; } recordEvidenceAssessment(item,{disabled:false,dataset:{evidenceId:evidence.id},textContent:"↑ useful"}); return; }
-  if(action === "evidence"){ openReport(item); document.getElementById("reportReason").value="evidence"; document.getElementById("reportDetails").placeholder="Paste a public source link or describe what you observed. Do not include private personal information."; return; }
-  if(action === "verify"){ openReport(item); document.getElementById("reportReason").value="verification"; document.getElementById("reportDetails").placeholder="What evidence, source, or independent check should reviewers examine?"; return; }
+  if(action === "evidence"){ openReport(item); selectReportReason("evidence"); return; }
+  if(action === "verify"){ openReport(item); selectReportReason("verification"); return; }
   if(action === "report"){ openReport(item); }
 }
 function resetComposer(){ document.getElementById("composerForm").reset(); document.getElementById("identityField").hidden=true; document.getElementById("anonymousToggle").checked=true; document.getElementById("sensitiveToggle").checked=false; document.getElementById("locationPrivacy").value="aggregate"; }
@@ -253,7 +254,7 @@ function setProfileControls(enabled,profile){
   [limit,correction,correctionButton,exportButton,deleteButton].forEach(control => { control.disabled=!enabled; });
   status.textContent=enabled ? "Signed in" : "Sign in to manage";
   optOut.checked=true;
-  if(profile){ limit.checked=profile.controls.limitSensitive; document.getElementById("profileDataSummary").textContent=`${profile.dataSummary.happenings} profile-linked happening${profile.dataSummary.happenings === 1 ? "" : "s"} · ${profile.dataSummary.deskItems || 0} desk item${profile.dataSummary.deskItems === 1 ? "" : "s"} · ${profile.dataSummary.pending} pending review · ${profile.dataSummary.reputationEvents || 0} signed-in reputation event${profile.dataSummary.reputationEvents === 1 ? "" : "s"}`; } else { limit.checked=true; }
+  if(profile){ limit.checked=profile.controls.limitSensitive; document.getElementById("profileDataSummary").textContent=`${profile.dataSummary.happenings} profile-linked happening${profile.dataSummary.happenings === 1 ? "" : "s"} · ${profile.dataSummary.deskItems || 0} desk item${profile.dataSummary.deskItems === 1 ? "" : "s"} · ${profile.dataSummary.pending} pending review · ${profile.dataSummary.reputationPoints || 0} Legit point${(profile.dataSummary.reputationPoints || 0) === 1 ? "" : "s"} from ${profile.dataSummary.reputationEvents || 0} evidence event${profile.dataSummary.reputationEvents === 1 ? "" : "s"}`; } else { limit.checked=true; }
 }
 async function loadPrivacyProfile(){
   const summary=document.getElementById("profileDataSummary"); summary.textContent="Checking profile-linked data…";

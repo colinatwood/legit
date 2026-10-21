@@ -75,6 +75,8 @@ assert.match(publicBody.happenings[0].evidence[0].provenance,/example\.com\/reco
 
 const report = await requestWithEnv("/api/reports",{method:"POST",headers:{origin,"content-type":"application/json","CF-Connecting-IP":"reporter"},body:JSON.stringify({targetType:"happening",targetId:publicBody.happenings[0].id,reason:"correction",details:"The time in the primary claim needs review."})},databaseEnv);
 assert.equal(report.status,202);
+const unsupportedReport = await requestWithEnv("/api/reports",{method:"POST",headers:{origin,"content-type":"application/json","CF-Connecting-IP":"reporter"},body:JSON.stringify({targetType:"happening",targetId:publicBody.happenings[0].id,reason:"admin_override",details:"Should never be accepted."})},databaseEnv);
+assert.equal(unsupportedReport.status,400);
 
 const deskHeaders = {origin,"content-type":"application/json","oai-authenticated-user-id":"smoke-user","CF-Connecting-IP":"desk-user"};
 const deskSave = await requestWithEnv("/api/desk",{method:"POST",headers:deskHeaders,body:JSON.stringify({action:"save",happeningKey:publicBody.happenings[0].id})},databaseEnv);
