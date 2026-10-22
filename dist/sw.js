@@ -1,5 +1,5 @@
-const SHELL_CACHE = "legit-shell-v51";
-const DATA_CACHE = "legit-data-v1";
+const SHELL_CACHE = "legit-shell-v56";
+const DATA_CACHE = "legit-public-data-v2";
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./sw.js"];
 
 self.addEventListener("install", event => {
@@ -15,10 +15,15 @@ self.addEventListener("fetch", event => {
   const url = new URL(request.url);
   if(request.method !== "GET" || url.origin !== self.location.origin) return;
   if(url.pathname.startsWith("/api/")){
+    // Never persist profile, export, authentication, or moderator responses.
+    if(url.pathname !== "/api/happenings") return;
     event.respondWith(fetch(request).then(response => {
-      if(response.ok) caches.open(DATA_CACHE).then(cache => cache.put(request,response.clone()));
+      if(response.ok && !/no-store|private/i.test(response.headers.get("cache-control") || "")){
+        const copy=response.clone();
+        event.waitUntil(caches.open(DATA_CACHE).then(cache => cache.put(request,copy)));
+      }
       return response;
-    }).catch(() => caches.match(request)));
+    }).catch(async () => (await caches.match(request)) || new Response(JSON.stringify({error:"Public data unavailable offline."}),{status:503,headers:{"content-type":"application/json"}})));
     return;
   }
   event.respondWith(fetch(request).then(response => {

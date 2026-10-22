@@ -1,0 +1,10 @@
+{
+  "name": "legit-local",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Privacy-aware local happenings map",
+  "type": "module",
+  "scripts": {
+    "build": "node -e \"process.exit(0)\""
+  }
+}
