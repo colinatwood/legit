@@ -21,6 +21,8 @@ let postCounter = 0;
 let publicLoadController = null;
 let publicLoadTimer = null;
 let publicEtag = null;
+let publicDataSavedAt = 0;
+const publicDataMaxAge = 5 * 60 * 1000;
 let mapLoadStarted = false;
 const refineFilters = {time:"today",legitimacy:"all",balance:"all",importance:"all"};
 const userState = {points:128};
@@ -71,6 +73,22 @@ function relativeTime(iso){
 function mapServerHappening(item){
   return {id:item.id,serverId:item.id,title:item.title,body:item.body,location:item.location,topic:item.topic,status:publicStatus(item.legitimacyScore),time:relativeTime(item.createdAt),ageMinutes:Math.max(0,Math.round((Date.now()-new Date(item.createdAt).getTime())/60000)),balance:item.balance || "agnostic",score:item.legitimacyScore || 0,impact:item.impact || 1,reports:item.reports || 1,sourceCount:item.sourceCount || 0,usefulEvidence:item.usefulEvidence || 0,independentAssessors:item.independentAssessors || 0,coordinationReview:Boolean(item.coordinationReview),publicLat:item.publicLat,publicLng:item.publicLng,claim:{text:item.body,attribution:`Aggregated from ${item.reports || 1} approved local report${item.reports === 1 ? "" : "s"}.`},evidence:item.evidence || [],corrections:item.corrections || [],balanceBasis:"Perspective is calculated from the reported frames in the aggregated signal.",legitimacyBasis:item.legitimacyBasis || "Legitimacy reflects evidence alignment, not popularity.",saved:deskState.keys.has(item.id)};
 }
+function clearPublicSelection(){
+  if(!selectedHappening?.serverId) return;
+  miniCard.hidden=true;
+  closeActions();
+  if(!document.getElementById("detailModal").hidden) closeModal("detailModal");
+  selectedHappening=null;
+}
+function showStalePublicData(){
+  if(!publicDataSavedAt || Date.now() - publicDataSavedAt > publicDataMaxAge){
+    for(let index=happenings.length-1; index>=0; index -= 1){ if(happenings[index].serverId) happenings.splice(index,1); }
+    publicEtag=null;
+    clearPublicSelection();
+    renderMarkers();
+    setDataStatus("Live data unavailable · demo signals", "stale");
+  }else setDataStatus("Connection unavailable · last known data", "stale");
+}
 async function loadPublicHappenings(){
   setDataStatus("Refreshing live map…","loading");
   publicLoadController?.abort();
@@ -80,18 +98,20 @@ async function loadPublicHappenings(){
     const headers={accept:"application/json"};
     if(publicEtag) headers["if-none-match"]=publicEtag;
     const response=await fetch(`/api/happenings?time=${encodeURIComponent(refineFilters.time)}`,{headers,signal:controller.signal});
-    if(response.status === 304){ setDataStatus("Live · no changes", "live"); return; }
-    if(!response.ok){ setDataStatus("Using last known map data","stale"); return; }
+    if(response.status === 304){ publicDataSavedAt=Date.now(); setDataStatus("Live · no changes", "live"); return; }
+    if(!response.ok){ showStalePublicData(); return; }
     publicEtag=response.headers.get("etag") || null;
     const data=await response.json();
     const serverItems=(data.happenings || []).map(mapServerHappening);
-    const serverIds=new Set(serverItems.map(item => item.serverId));
-    for(let index=happenings.length-1; index>=0; index -= 1){ if(happenings[index].serverId && serverIds.has(happenings[index].serverId)) happenings.splice(index,1); }
+    const offline=response.headers.get("x-legit-offline") === "1";
+    publicDataSavedAt=offline ? Number(response.headers.get("x-legit-saved-at")) : Date.now();
+    for(let index=happenings.length-1; index>=0; index -= 1){ if(happenings[index].serverId) happenings.splice(index,1); }
+    if(selectedHappening?.serverId && !serverItems.some(item => item.serverId === selectedHappening.serverId)) clearPublicSelection();
     happenings.push(...serverItems);
     applyDeskState();
     renderMarkers();
-    setDataStatus(serverItems.length ? "Live · updated just now" : "Live · demo signals", "live");
-  }catch(error){ if(error.name !== "AbortError") setDataStatus("Using last known map data","stale"); }
+    setDataStatus(offline ? "Offline · recent saved data (up to 5 min old)" : (serverItems.length ? "Live · updated just now" : "Live · demo signals"), offline ? "stale" : "live");
+  }catch(error){ if(error.name !== "AbortError") showStalePublicData(); }
   finally{ if(publicLoadController === controller) publicLoadController = null; }
 }
 function markerElement(item){
@@ -344,7 +364,7 @@ loadLeaflet();
 loadPublicHappenings();
 let refreshTimer=null;
 function refreshInterval(){ const connection=navigator.connection || navigator.mozConnection || navigator.webkitConnection; if(connection?.saveData || /slow-2g|2g/.test(connection?.effectiveType || "")) return 90000; if(connection?.effectiveType === "3g") return 60000; return 30000; }
-function scheduleLiveRefresh(){ window.clearTimeout(refreshTimer); refreshTimer=window.setTimeout(() => { if(document.visibilityState === "visible" && navigator.onLine !== false) loadPublicHappenings(); scheduleLiveRefresh(); },refreshInterval()); }
+function scheduleLiveRefresh(){ window.clearTimeout(refreshTimer); refreshTimer=window.setTimeout(() => { if(document.visibilityState === "visible" && navigator.onLine !== false) loadPublicHappenings(); else if(document.visibilityState === "visible") showStalePublicData(); scheduleLiveRefresh(); },refreshInterval()); }
 document.addEventListener("visibilitychange",() => { if(document.visibilityState === "visible") loadPublicHappenings(); });
 window.addEventListener("online",() => loadPublicHappenings());
 if("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js",{scope:"./"}).catch(() => {});
