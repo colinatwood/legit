@@ -21,6 +21,9 @@ let postCounter = 0;
 let publicLoadController = null;
 let publicLoadTimer = null;
 let publicEtag = null;
+let publicSnapshotWindow = null;
+let publicLoadWindow = null;
+const publicLoadTimeout = 12000;
 let publicDataSavedAt = 0;
 const publicDataMaxAge = 5 * 60 * 1000;
 let mapLoadStarted = false;
@@ -81,38 +84,71 @@ function clearPublicSelection(){
   selectedHappening=null;
 }
 function showStalePublicData(){
-  if(!publicDataSavedAt || Date.now() - publicDataSavedAt > publicDataMaxAge){
+  if(publicSnapshotWindow !== refineFilters.time || !publicDataSavedAt || Date.now() - publicDataSavedAt > publicDataMaxAge){
     for(let index=happenings.length-1; index>=0; index -= 1){ if(happenings[index].serverId) happenings.splice(index,1); }
     publicEtag=null;
+    publicSnapshotWindow=null;
     clearPublicSelection();
     renderMarkers();
     setDataStatus("Live data unavailable · demo signals", "stale");
   }else setDataStatus("Connection unavailable · last known data", "stale");
 }
-async function loadPublicHappenings(){
-  setDataStatus("Refreshing live map…","loading");
+function cancelPublicLoad(){
   publicLoadController?.abort();
+  publicLoadController=null;
+  publicLoadWindow=null;
+}
+async function loadPublicHappenings(){
+  const timeWindow=refineFilters.time;
+  // Reconnect and visibility events share an in-flight request for this window.
+  if(publicLoadController && !publicLoadController.signal.aborted && publicLoadWindow === timeWindow) return;
+  cancelPublicLoad();
   const controller = new AbortController();
   publicLoadController = controller;
+  publicLoadWindow = timeWindow;
+  const isCurrent=() => publicLoadController === controller && refineFilters.time === timeWindow;
+  setDataStatus("Refreshing live map…","loading");
+  const timeout=window.setTimeout(() => {
+    if(isCurrent()){
+      controller.abort();
+      showStalePublicData();
+    }
+  },publicLoadTimeout);
   try{
     const headers={accept:"application/json"};
-    if(publicEtag) headers["if-none-match"]=publicEtag;
-    const response=await fetch(`/api/happenings?time=${encodeURIComponent(refineFilters.time)}`,{headers,signal:controller.signal});
-    if(response.status === 304){ publicDataSavedAt=Date.now(); setDataStatus("Live · no changes", "live"); return; }
+    // A validator is useful only while its matching window's snapshot is held.
+    if(publicEtag && publicSnapshotWindow === timeWindow) headers["if-none-match"]=publicEtag;
+    const response=await fetch(`/api/happenings?time=${encodeURIComponent(timeWindow)}`,{headers,signal:controller.signal});
+    if(!isCurrent() || controller.signal.aborted) return;
+    if(response.status === 304){
+      if(!headers["if-none-match"] || publicSnapshotWindow !== timeWindow) throw new Error("No matching snapshot to revalidate.");
+      publicDataSavedAt=Date.now();
+      setDataStatus("Live · no changes", "live");
+      return;
+    }
     if(!response.ok){ showStalePublicData(); return; }
-    publicEtag=response.headers.get("etag") || null;
     const data=await response.json();
-    const serverItems=(data.happenings || []).map(mapServerHappening);
+    // Abort can occur after headers arrive but before the response body finishes.
+    if(!isCurrent() || controller.signal.aborted) return;
+    if(!Array.isArray(data.happenings) || (data.window && data.window !== timeWindow)) throw new Error("Unexpected public snapshot.");
+    const serverItems=data.happenings.map(mapServerHappening);
     const offline=response.headers.get("x-legit-offline") === "1";
-    publicDataSavedAt=offline ? Number(response.headers.get("x-legit-saved-at")) : Date.now();
+    const savedAt=offline ? Number(response.headers.get("x-legit-saved-at")) : Date.now();
+    if(!Number.isFinite(savedAt) || savedAt <= 0 || Date.now()-savedAt < 0 || Date.now()-savedAt > publicDataMaxAge) throw new Error("Expired public snapshot.");
+    publicDataSavedAt=savedAt;
+    publicSnapshotWindow=timeWindow;
+    publicEtag=response.headers.get("etag") || null;
     for(let index=happenings.length-1; index>=0; index -= 1){ if(happenings[index].serverId) happenings.splice(index,1); }
     if(selectedHappening?.serverId && !serverItems.some(item => item.serverId === selectedHappening.serverId)) clearPublicSelection();
     happenings.push(...serverItems);
     applyDeskState();
     renderMarkers();
     setDataStatus(offline ? "Offline · recent saved data (up to 5 min old)" : (serverItems.length ? "Live · updated just now" : "Live · demo signals"), offline ? "stale" : "live");
-  }catch(error){ if(error.name !== "AbortError") showStalePublicData(); }
-  finally{ if(publicLoadController === controller) publicLoadController = null; }
+  }catch(error){ if(isCurrent() && !controller.signal.aborted) showStalePublicData(); }
+  finally{
+    window.clearTimeout(timeout);
+    if(publicLoadController === controller){ publicLoadController=null; publicLoadWindow=null; }
+  }
 }
 function markerElement(item){
   const el=document.createElement("div"); el.className="map-marker"; el.setAttribute("aria-hidden","true"); el.style.setProperty("--balance-color",balanceColor(item.balance)); el.style.setProperty("--impact",item.impact);
@@ -317,7 +353,7 @@ document.querySelectorAll(".modal-backdrop").forEach(backdrop => backdrop.addEve
 document.querySelectorAll("#filterPanel select").forEach(select => select.addEventListener("change",event => { refineFilters[event.target.id.replace("Filter","")]=event.target.value; renderMarkers(); }));
 const timePresets=["Today","Yesterday","Last week","Last month","Last year","All time"];
 const timeValues=["today","yesterday","week","month","year","all"];
-function setTimePreset(index){ const safeIndex=Math.max(0,Math.min(timeValues.length-1,index)); refineFilters.time=timeValues[safeIndex]; document.getElementById("timeValue").textContent=timePresets[safeIndex]; document.getElementById("timeRange").setAttribute("aria-valuetext",timePresets[safeIndex]); renderMarkers(); window.clearTimeout(publicLoadTimer); publicLoadTimer=window.setTimeout(loadPublicHappenings,180); }
+function setTimePreset(index){ const safeIndex=Math.max(0,Math.min(timeValues.length-1,index)); refineFilters.time=timeValues[safeIndex]; if(publicSnapshotWindow !== refineFilters.time){ cancelPublicLoad(); showStalePublicData(); } document.getElementById("timeValue").textContent=timePresets[safeIndex]; document.getElementById("timeRange").setAttribute("aria-valuetext",timePresets[safeIndex]); renderMarkers(); window.clearTimeout(publicLoadTimer); publicLoadTimer=window.setTimeout(loadPublicHappenings,180); }
 document.getElementById("timeRange").addEventListener("input",event => setTimePreset(Number(event.target.value)));
 document.querySelectorAll("[data-action]").forEach(button => button.addEventListener("click",() => runAction(button.dataset.action)));
 document.getElementById("miniAdd").addEventListener("click",() => { if(selectedHappening) toggleDesk(selectedHappening); });
@@ -365,8 +401,9 @@ loadPublicHappenings();
 let refreshTimer=null;
 function refreshInterval(){ const connection=navigator.connection || navigator.mozConnection || navigator.webkitConnection; if(connection?.saveData || /slow-2g|2g/.test(connection?.effectiveType || "")) return 90000; if(connection?.effectiveType === "3g") return 60000; return 30000; }
 function scheduleLiveRefresh(){ window.clearTimeout(refreshTimer); refreshTimer=window.setTimeout(() => { if(document.visibilityState === "visible" && navigator.onLine !== false) loadPublicHappenings(); else if(document.visibilityState === "visible") showStalePublicData(); scheduleLiveRefresh(); },refreshInterval()); }
-document.addEventListener("visibilitychange",() => { if(document.visibilityState === "visible") loadPublicHappenings(); });
-window.addEventListener("online",() => loadPublicHappenings());
+document.addEventListener("visibilitychange",() => { if(document.visibilityState === "visible") loadPublicHappenings(); else cancelPublicLoad(); });
+window.addEventListener("online",() => { if(document.visibilityState === "visible") loadPublicHappenings(); });
+window.addEventListener("offline",() => { cancelPublicLoad(); showStalePublicData(); });
 if("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js",{scope:"./"}).catch(() => {});
 scheduleLiveRefresh();
 document.addEventListener("keydown",event => {
