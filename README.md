@@ -138,7 +138,7 @@ Then visit `http://localhost:4173`.
 
 The server-side privacy gate is generated for Sites’ Worker runtime. Run `node scripts/build-worker.mjs` before packaging a deployment; a local static server will not provide the D1-backed `/api/happenings` endpoint.
 
-After rebuilding the Worker, run `node scripts/security-smoke.mjs` to check the response security headers and mutation boundary with synthetic requests. Run `node scripts/offline-privacy-smoke.mjs` for cache expiry, private-route bypass, offline status, withdrawn-report removal, and in-memory expiry checks. Run `node scripts/refresh-reliability-smoke.mjs` for time-window validators, late-response races, request/body deadlines, slider debouncing, reconnect coalescing, and hidden/offline cancellation.
+After rebuilding the Worker, run `node scripts/security-smoke.mjs` to check the response security headers and mutation boundary with synthetic requests. Run `node scripts/offline-privacy-smoke.mjs` for cache expiry, private-route bypass, offline status, withdrawn-report removal, and in-memory expiry checks. Run `node scripts/refresh-reliability-smoke.mjs` for time-window validators, late-response races, request/body deadlines, slider debouncing, reconnect coalescing, and hidden/offline cancellation. Run `node scripts/detail-refresh-smoke.mjs` for corrected open views, age labels, evidence-button continuity, and dialog focus.
 
 ## Public-data freshness
 
@@ -146,11 +146,12 @@ Public offline storage holds at most the six supported time-window snapshots for
 
 Public refreshes have a 12-second deadline covering response headers and body, and discard responses superseded by time-window changes or cancellation. Conditional requests use the validator only for the snapshot currently held for that time window. Slider changes clear mismatched data immediately and retain the existing 180ms debounce. Reconnect and visibility events coalesce with an active request; hidden and offline events cancel in-flight work.
 
-### Current handoff — 2026-10-23
+### Current handoff — 2026-10-24
 
 - Completed: bounded public offline snapshots, explicit offline status, known-shell-only caching, legacy-cache cleanup, and authoritative public-snapshot replacement; then window-scoped conditional refreshes, deadline/cancellation handling, and reconnect/slider regression coverage.
-- Recovery point before this increment: `backup/legit-before-refresh-reliability-20261023`, source commit `c2f10edde733f6b71229cb8a74a36e7406630228`; deployed v57 remains available as a rollback version. The GitHub mirror also has `backup/before-refresh-reliability-20261023`.
-- Next safe item: keep open public detail/mini views and relative-age labels aligned with refreshed corrections and unchanged (304) snapshots. Include keyboard-focus regression coverage.
+- Recovery point before this increment: `backup/legit-before-detail-refresh-20261024`, source commit `11eeff1ccde7a6f9ce956b86d724506ff574ee7c`; deployed v58 remains available as a rollback version. The GitHub mirror also has `backup/before-detail-refresh-20261024`.
+- Completed this increment: open mini/detail cards rebind to current public snapshots; correction history and ages refresh in place, including on 304. Evidence buttons retain identity so focus and pending assessments survive refreshes. A 304 avoids rebuilding map markers when visible membership is unchanged.
+- Next safe item: preserve keyboard focus across changed (200) map/list snapshots, including safe focus recovery when a report is withdrawn or filtered out.
 - Existing operational follow-up: attach the production retention Cron Trigger and verify moderator credential configuration through supported hosting controls. Real media processing and notification delivery remain deferred.
 
 ## Ordered work backlog

@@ -1,4 +1,4 @@
-const SHELL_CACHE = "legit-shell-v58";
+const SHELL_CACHE = "legit-shell-v59";
 const DATA_CACHE = "legit-public-data-v3";
 const PUBLIC_DATA_MAX_AGE = 5 * 60 * 1000;
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./sw.js"];

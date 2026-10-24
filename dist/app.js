@@ -74,7 +74,27 @@ function relativeTime(iso){
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 function mapServerHappening(item){
-  return {id:item.id,serverId:item.id,title:item.title,body:item.body,location:item.location,topic:item.topic,status:publicStatus(item.legitimacyScore),time:relativeTime(item.createdAt),ageMinutes:Math.max(0,Math.round((Date.now()-new Date(item.createdAt).getTime())/60000)),balance:item.balance || "agnostic",score:item.legitimacyScore || 0,impact:item.impact || 1,reports:item.reports || 1,sourceCount:item.sourceCount || 0,usefulEvidence:item.usefulEvidence || 0,independentAssessors:item.independentAssessors || 0,coordinationReview:Boolean(item.coordinationReview),publicLat:item.publicLat,publicLng:item.publicLng,claim:{text:item.body,attribution:`Aggregated from ${item.reports || 1} approved local report${item.reports === 1 ? "" : "s"}.`},evidence:item.evidence || [],corrections:item.corrections || [],balanceBasis:"Perspective is calculated from the reported frames in the aggregated signal.",legitimacyBasis:item.legitimacyBasis || "Legitimacy reflects evidence alignment, not popularity.",saved:deskState.keys.has(item.id)};
+  return {id:item.id,serverId:item.id,createdAt:item.createdAt,title:item.title,body:item.body,location:item.location,topic:item.topic,status:publicStatus(item.legitimacyScore),time:relativeTime(item.createdAt),ageMinutes:Math.max(0,Math.round((Date.now()-new Date(item.createdAt).getTime())/60000)),balance:item.balance || "agnostic",score:item.legitimacyScore || 0,impact:item.impact || 1,reports:item.reports || 1,sourceCount:item.sourceCount || 0,usefulEvidence:item.usefulEvidence || 0,independentAssessors:item.independentAssessors || 0,coordinationReview:Boolean(item.coordinationReview),publicLat:item.publicLat,publicLng:item.publicLng,claim:{text:item.body,attribution:`Aggregated from ${item.reports || 1} approved local report${item.reports === 1 ? "" : "s"}.`},evidence:item.evidence || [],corrections:item.corrections || [],balanceBasis:"Perspective is calculated from the reported frames in the aggregated signal.",legitimacyBasis:item.legitimacyBasis || "Legitimacy reflects evidence alignment, not popularity.",saved:deskState.keys.has(item.id)};
+}
+function refreshPublicViews(renderMap=true){
+  const visibleBefore=visibleHappenings().map(item => String(item.id)).join(",");
+  happenings.forEach(item => {
+    if(item.serverId && item.createdAt){
+      item.time=relativeTime(item.createdAt);
+      item.ageMinutes=Math.max(0,Math.round((Date.now()-new Date(item.createdAt).getTime())/60000));
+    }
+  });
+  if(selectedHappening?.serverId){
+    const current=happenings.find(item => item.serverId === selectedHappening.serverId);
+    if(!current) clearPublicSelection();
+    else{
+      selectedHappening=current;
+      if(!miniCard.hidden) fillMini(current);
+      if(!actionMenu.hidden) document.getElementById("actionTitle").textContent=current.title;
+      if(!document.getElementById("detailModal").hidden) populateDetail(current);
+    }
+  }
+  if(renderMap || visibleBefore !== visibleHappenings().map(item => String(item.id)).join(",")) renderMarkers();
 }
 function clearPublicSelection(){
   if(!selectedHappening?.serverId) return;
@@ -123,6 +143,7 @@ async function loadPublicHappenings(){
     if(response.status === 304){
       if(!headers["if-none-match"] || publicSnapshotWindow !== timeWindow) throw new Error("No matching snapshot to revalidate.");
       publicDataSavedAt=Date.now();
+      refreshPublicViews(false);
       setDataStatus("Live · no changes", "live");
       return;
     }
@@ -139,10 +160,9 @@ async function loadPublicHappenings(){
     publicSnapshotWindow=timeWindow;
     publicEtag=response.headers.get("etag") || null;
     for(let index=happenings.length-1; index>=0; index -= 1){ if(happenings[index].serverId) happenings.splice(index,1); }
-    if(selectedHappening?.serverId && !serverItems.some(item => item.serverId === selectedHappening.serverId)) clearPublicSelection();
     happenings.push(...serverItems);
     applyDeskState();
-    renderMarkers();
+    refreshPublicViews();
     setDataStatus(offline ? "Offline · recent saved data (up to 5 min old)" : (serverItems.length ? "Live · updated just now" : "Live · demo signals"), offline ? "stale" : "live");
   }catch(error){ if(isCurrent() && !controller.signal.aborted) showStalePublicData(); }
   finally{
@@ -253,11 +273,22 @@ async function loadTransparencySummary(){
 function showModal(id){ const modal=document.getElementById(id); lastFocusedElement=document.activeElement; modal.hidden=false; const focusable=modal.querySelector("button,a[href],input,select,textarea,[tabindex]:not([tabindex='-1'])"); focusable?.focus(); }
 function closeModal(id){ const modal=document.getElementById(id); modal.hidden=true; if(id === "accessibilityPanel") document.getElementById("openAccessibility").setAttribute("aria-expanded","false"); if(lastFocusedElement && typeof lastFocusedElement.focus === "function") lastFocusedElement.focus(); }
 function populateDetail(item){
+  const sourceList=document.getElementById("sourceList");
+  const focusedEvidence=sourceList.contains(document.activeElement) ? document.activeElement?.dataset.evidenceId : null;
+  const evidenceButtons=new Map([...sourceList.querySelectorAll(".tiny-useful")].map(button => [button.dataset.evidenceId,button]));
   document.getElementById("detailStatusDot").style.background=statusColor(item.status); document.getElementById("detailStatus").textContent=item.status; document.getElementById("detailTime").textContent=item.time; document.getElementById("detailTitle").textContent=item.title; document.getElementById("detailBody").textContent=item.body; document.getElementById("detailLocation").textContent=locationText(item); document.getElementById("detailBalance").textContent=`${balanceLabel(item.balance)} · descriptive only`; document.getElementById("detailImportance").textContent=`${item.impact} / 5`; document.getElementById("detailScore").textContent=`${item.score}%`; document.getElementById("detailClaim").textContent=item.claim.text; document.getElementById("detailClaimAttribution").textContent=`${item.claim.attribution} ${item.balanceBasis}`; document.getElementById("detailBasis").textContent=item.legitimacyBasis || "Legitimacy reflects evidence alignment, not popularity."; document.getElementById("detailSources").textContent=`${item.evidence.length} trails`;
   document.getElementById("detailTrustSummary").innerHTML=`<strong>${item.score >= 80 ? "Corroborated by current evidence" : item.score >= 40 ? "Evidence is still building" : "Needs independent checking"}</strong><span>${item.independentAssessors || 0} independent assessor${item.independentAssessors === 1 ? "" : "s"} · ${item.sourceCount || item.evidence.length} source trail${(item.sourceCount || item.evidence.length) === 1 ? "" : "s"} · ${item.usefulEvidence || 0} useful-evidence signal${item.usefulEvidence === 1 ? "" : "s"}</span>${item.coordinationReview ? `<em>Assessment burst held for coordination review.</em>` : ""}`;
   document.getElementById("sourceList").innerHTML=item.evidence.map(evidence => `<div class="evidence-row"><div class="evidence-avatar">${escapeHtml(evidence.initials)}</div><div class="evidence-copy"><strong>${escapeHtml(evidence.title)}</strong><p>${escapeHtml(evidence.excerpt)}</p><small>${escapeHtml(evidence.provenance)} · <button class="tiny-useful" data-evidence-id="${escapeHtml(evidence.id)}">↑ useful</button></small></div></div>`).join("") || `<p class="privacy-line">No approved evidence trail yet. The signal remains unverified.</p>`;
   const historySection=document.getElementById("correctionHistorySection"); const history=item.corrections || []; historySection.hidden=!history.length; document.getElementById("correctionHistory").innerHTML=history.map(entry => `<div class="history-row"><strong>${escapeHtml(entry.type === "appeal" ? "Appeal resolved" : "Correction resolved")}</strong><p>${escapeHtml(entry.summary)}</p><small>${escapeHtml(relativeTime(entry.createdAt))}</small></div>`).join("");
-  document.querySelectorAll(".tiny-useful").forEach(button => button.addEventListener("click",event => { event.stopPropagation(); recordEvidenceAssessment(item,button); }));
+  sourceList.querySelectorAll(".tiny-useful").forEach(button => {
+    const existing=evidenceButtons.get(button.dataset.evidenceId);
+    if(existing){ button.replaceWith(existing); return; }
+    button.addEventListener("click",event => { event.stopPropagation(); recordEvidenceAssessment(item,button); });
+  });
+  if(focusedEvidence){
+    const replacement=[...sourceList.querySelectorAll(".tiny-useful")].find(button => button.dataset.evidenceId === focusedEvidence && !button.disabled);
+    (replacement || document.getElementById("detailModal").querySelector(".close-button"))?.focus({preventScroll:true});
+  }
 }
 function openFull(item){ selectedHappening=item; closeActions(); miniCard.hidden=true; populateDetail(item); showModal("detailModal"); }
 function selectReportReason(value){ const reason=document.getElementById("reportReason"); reason.value=value; reason.dispatchEvent(new Event("change")); }
