@@ -136,7 +136,7 @@ python3 -m http.server 4173 --directory dist
 
 Then visit `http://localhost:4173`.
 
-The server-side privacy gate is generated for Sites’ Worker runtime. Run `node scripts/build-worker.mjs` before packaging a deployment; a local static server will not provide the D1-backed `/api/happenings` endpoint.
+The server-side privacy gate is generated for Sites’ Worker runtime. Run `npm run build` before packaging a deployment; a local static server will not provide the D1-backed `/api/happenings` endpoint.
 
 After rebuilding the Worker, run `node scripts/security-smoke.mjs` to check the response security headers and mutation boundary with synthetic requests. Run `node scripts/offline-privacy-smoke.mjs` for cache expiry, private-route bypass, offline status, withdrawn-report removal, and in-memory expiry checks. Run `node scripts/refresh-reliability-smoke.mjs` for time-window validators, late-response races, request/body deadlines, slider debouncing, reconnect coalescing, and hidden/offline cancellation. Run `node scripts/detail-refresh-smoke.mjs` for corrected open views, age labels, evidence-button continuity, and dialog focus. Run `node scripts/map-focus-smoke.mjs` for changed map/list snapshots, safe focus recovery, text fallback, dialog return, and marker keyboard semantics.
 
@@ -146,13 +146,16 @@ Public offline storage holds at most the six supported time-window snapshots for
 
 Public refreshes have a 12-second deadline covering response headers and body, and discard responses superseded by time-window changes or cancellation. Conditional requests use the validator only for the snapshot currently held for that time window. Slider changes clear mismatched data immediately and retain the existing 180ms debounce. Reconnect and visibility events coalesce with an active request; hidden and offline events cancel in-flight work.
 
+Run `npm test` for one-command contributor validation: it regenerates the Worker, checks application and script syntax, and runs all five regression suites, stopping on the first failure. No dependency installation or production credentials are needed.
+
 ### Current handoff — 2026-10-25
 
 - Completed: bounded public offline snapshots, explicit offline status, known-shell-only caching, legacy-cache cleanup, and authoritative public-snapshot replacement; then window-scoped conditional refreshes, deadline/cancellation handling, and reconnect/slider regression coverage.
-- Recovery point before this increment: `backup/legit-before-map-focus-20261025`, source commit `00168de60bb985512490b0f0463b50f40cd02f27`; deployed v59 remains available as a rollback version. The GitHub mirror also has `backup/before-map-focus-20261025`.
+- Recovery point before this increment: `backup/legit-before-build-validation-20261025`, source commit `9622ceb4c7325ad5c4ccf6df545abf726f11c06b`; deployed v60 remains available as a rollback version. The GitHub mirror also has `backup/before-build-validation-20261025`.
 - Completed this increment: open mini/detail cards rebind to current public snapshots; correction history and ages refresh in place, including on 304. Evidence buttons retain identity so focus and pending assessments survive refreshes. A 304 avoids rebuilding map markers when visible membership is unchanged.
 - Completed this increment: map and text-list refreshes restore focus to the same visible report; withdrawn, filtered, and expired reports return focus to the time slider. Dialog return targets resolve current report nodes after refresh. Unrelated toolbar/dialog focus remains untouched.
-- Next safe item: replace the placeholder package build command with Worker generation and add a single contributor command for all regression suites, so build output cannot silently remain stale.
+- Completed this increment: `npm run build` generates the Worker; `npm test` rebuilds, checks syntax, and runs all five suites with failure propagation. Contributor instructions identify source versus generated files.
+- Next safe item: add public-mirror CI for the same validation command and detection of stale checked-in Worker output.
 - Existing operational follow-up: attach the production retention Cron Trigger and verify moderator credential configuration through supported hosting controls. Real media processing and notification delivery remain deferred.
 
 ## Ordered work backlog
