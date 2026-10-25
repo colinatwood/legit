@@ -138,7 +138,7 @@ Then visit `http://localhost:4173`.
 
 The server-side privacy gate is generated for Sites’ Worker runtime. Run `node scripts/build-worker.mjs` before packaging a deployment; a local static server will not provide the D1-backed `/api/happenings` endpoint.
 
-After rebuilding the Worker, run `node scripts/security-smoke.mjs` to check the response security headers and mutation boundary with synthetic requests. Run `node scripts/offline-privacy-smoke.mjs` for cache expiry, private-route bypass, offline status, withdrawn-report removal, and in-memory expiry checks. Run `node scripts/refresh-reliability-smoke.mjs` for time-window validators, late-response races, request/body deadlines, slider debouncing, reconnect coalescing, and hidden/offline cancellation. Run `node scripts/detail-refresh-smoke.mjs` for corrected open views, age labels, evidence-button continuity, and dialog focus.
+After rebuilding the Worker, run `node scripts/security-smoke.mjs` to check the response security headers and mutation boundary with synthetic requests. Run `node scripts/offline-privacy-smoke.mjs` for cache expiry, private-route bypass, offline status, withdrawn-report removal, and in-memory expiry checks. Run `node scripts/refresh-reliability-smoke.mjs` for time-window validators, late-response races, request/body deadlines, slider debouncing, reconnect coalescing, and hidden/offline cancellation. Run `node scripts/detail-refresh-smoke.mjs` for corrected open views, age labels, evidence-button continuity, and dialog focus. Run `node scripts/map-focus-smoke.mjs` for changed map/list snapshots, safe focus recovery, text fallback, dialog return, and marker keyboard semantics.
 
 ## Public-data freshness
 
@@ -146,12 +146,13 @@ Public offline storage holds at most the six supported time-window snapshots for
 
 Public refreshes have a 12-second deadline covering response headers and body, and discard responses superseded by time-window changes or cancellation. Conditional requests use the validator only for the snapshot currently held for that time window. Slider changes clear mismatched data immediately and retain the existing 180ms debounce. Reconnect and visibility events coalesce with an active request; hidden and offline events cancel in-flight work.
 
-### Current handoff — 2026-10-24
+### Current handoff — 2026-10-25
 
 - Completed: bounded public offline snapshots, explicit offline status, known-shell-only caching, legacy-cache cleanup, and authoritative public-snapshot replacement; then window-scoped conditional refreshes, deadline/cancellation handling, and reconnect/slider regression coverage.
-- Recovery point before this increment: `backup/legit-before-detail-refresh-20261024`, source commit `11eeff1ccde7a6f9ce956b86d724506ff574ee7c`; deployed v58 remains available as a rollback version. The GitHub mirror also has `backup/before-detail-refresh-20261024`.
+- Recovery point before this increment: `backup/legit-before-map-focus-20261025`, source commit `00168de60bb985512490b0f0463b50f40cd02f27`; deployed v59 remains available as a rollback version. The GitHub mirror also has `backup/before-map-focus-20261025`.
 - Completed this increment: open mini/detail cards rebind to current public snapshots; correction history and ages refresh in place, including on 304. Evidence buttons retain identity so focus and pending assessments survive refreshes. A 304 avoids rebuilding map markers when visible membership is unchanged.
-- Next safe item: preserve keyboard focus across changed (200) map/list snapshots, including safe focus recovery when a report is withdrawn or filtered out.
+- Completed this increment: map and text-list refreshes restore focus to the same visible report; withdrawn, filtered, and expired reports return focus to the time slider. Dialog return targets resolve current report nodes after refresh. Unrelated toolbar/dialog focus remains untouched.
+- Next safe item: replace the placeholder package build command with Worker generation and add a single contributor command for all regression suites, so build output cannot silently remain stale.
 - Existing operational follow-up: attach the production retention Cron Trigger and verify moderator credential configuration through supported hosting controls. Real media processing and notification delivery remain deferred.
 
 ## Ordered work backlog

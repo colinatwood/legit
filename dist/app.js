@@ -34,6 +34,7 @@ const accessibilityState = {textSize:"default",highContrast:false,reducedMotion:
 const deskStorageKey = "legit-desk";
 const deskState = {server:false,keys:new Set()};
 let lastFocusedElement = null;
+let lastFocusedSignal = null;
 
 function saveAccessibility(){ try{ localStorage.setItem(accessibilityKey,JSON.stringify(accessibilityState)); }catch{} }
 function loadAccessibility(){ try{ const saved=JSON.parse(localStorage.getItem(accessibilityKey)||"{}"); if(["default","large","largest"].includes(saved.textSize)) accessibilityState.textSize=saved.textSize; ["highContrast","reducedMotion","mapLabels"].forEach(key => { if(typeof saved[key] === "boolean") accessibilityState[key]=saved[key]; }); }catch{} }
@@ -178,6 +179,7 @@ function markerElement(item){
 function bindMarkerPress(marker,item,pressState){
   const node=marker.getElement();
   if(!node) return;
+  node.dataset.signalId=String(item.id);
   node.setAttribute("role","button");
   node.setAttribute("tabindex","0");
   node.setAttribute("aria-label",`${item.title}; ${balanceLabel(item.balance)}; ${item.score}% legitimacy; importance ${item.impact} of 5; press Enter for details or Shift+F10 for actions`);
@@ -243,7 +245,24 @@ function bindMarkerPress(marker,item,pressState){
     }
   });
 }
+function captureSignalFocus(element=document.activeElement){
+  const signal=element?.closest?.("[data-signal-id]");
+  if(!signal) return null;
+  for(const surface of ["map","signalList"]){
+    if(document.getElementById(surface)?.contains?.(signal)) return {surface,id:signal.dataset.signalId};
+  }
+  return null;
+}
+function restoreSignalFocus(bookmark){
+  if(!bookmark) return;
+  const preferred=document.getElementById(bookmark.surface);
+  const alternate=document.getElementById(bookmark.surface === "map" ? "signalList" : "map");
+  const surface=preferred && !preferred.hidden ? preferred : alternate && !alternate.hidden ? alternate : null;
+  const target=surface ? [...surface.querySelectorAll("[data-signal-id]")].find(node => node.dataset.signalId === bookmark.id && !node.disabled) : null;
+  (target || document.getElementById("timeRange"))?.focus({preventScroll:true});
+}
 function renderMarkers(){
+  const focusedSignal=captureSignalFocus();
   const visible=visibleHappenings();
   if(map){
     mapMarkers.forEach(marker => marker.remove());
@@ -254,6 +273,7 @@ function renderMarkers(){
   signalList.querySelectorAll("[data-signal-id]").forEach(button => button.addEventListener("click",() => { const item=happenings.find(entry => String(entry.id) === button.dataset.signalId); if(item) openMini(item); }));
   document.getElementById("signalCount").textContent=`${visible.length} signals`;
   const active=Object.entries(refineFilters).filter(([key,value]) => key === "time" ? value !== "today" : value !== "all").length; document.getElementById("filterCount").textContent=active ? `(${active})` : "";
+  restoreSignalFocus(focusedSignal);
 }
 function fillMini(item){
   document.getElementById("miniStatusDot").style.background=statusColor(item.status); document.getElementById("miniStatus").textContent=item.status; document.getElementById("miniTime").textContent=item.time; document.getElementById("miniTitle").textContent=item.title; document.getElementById("miniBody").textContent=item.body; document.getElementById("miniLocation").textContent=locationText(item); document.getElementById("miniScore").textContent=`${item.score}% legit`; document.getElementById("miniMeter").style.width=`${item.score}%`; document.getElementById("miniMeter").style.background=`linear-gradient(90deg,${legitColor(item.score)},#35c978)`;
@@ -270,8 +290,8 @@ async function loadTransparencySummary(){
     const summary=data.publicSummary || {}; host.innerHTML=`<strong>Public review snapshot</strong><span>${Number(summary.cleared || 0)} cleared · ${Number(summary.pending || 0)} pending · ${Number(summary.flagged || 0)} flagged</span><span>Last 30 days: ${Number(summary.reviewedLast30Days || 0)} reviewed · ${Number(summary.clearedLast30Days || 0)} cleared · ${Number(summary.flaggedLast30Days || 0)} flagged · ${Number(summary.heldLast30Days || 0)} held</span><small>${escapeHtml(data.disclosure || "Counts only; no identities or exact locations are shown.")}</small>`; host.dataset.loaded="true";
   }catch(error){ host.textContent="Privacy-safe review counts are temporarily unavailable."; }
 }
-function showModal(id){ const modal=document.getElementById(id); lastFocusedElement=document.activeElement; modal.hidden=false; const focusable=modal.querySelector("button,a[href],input,select,textarea,[tabindex]:not([tabindex='-1'])"); focusable?.focus(); }
-function closeModal(id){ const modal=document.getElementById(id); modal.hidden=true; if(id === "accessibilityPanel") document.getElementById("openAccessibility").setAttribute("aria-expanded","false"); if(lastFocusedElement && typeof lastFocusedElement.focus === "function") lastFocusedElement.focus(); }
+function showModal(id){ const modal=document.getElementById(id); lastFocusedElement=document.activeElement; lastFocusedSignal=captureSignalFocus(lastFocusedElement); modal.hidden=false; const focusable=modal.querySelector("button,a[href],input,select,textarea,[tabindex]:not([tabindex='-1'])"); focusable?.focus(); }
+function closeModal(id){ const modal=document.getElementById(id); modal.hidden=true; if(id === "accessibilityPanel") document.getElementById("openAccessibility").setAttribute("aria-expanded","false"); if(lastFocusedSignal) restoreSignalFocus(lastFocusedSignal); else if(lastFocusedElement && typeof lastFocusedElement.focus === "function") lastFocusedElement.focus(); }
 function populateDetail(item){
   const sourceList=document.getElementById("sourceList");
   const focusedEvidence=sourceList.contains(document.activeElement) ? document.activeElement?.dataset.evidenceId : null;
