@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build-worker.mjs",
-    "test": "node scripts/validate.mjs"
+    "test": "node scripts/validate.mjs",
+    "check:generated": "node scripts/build-worker.mjs --check"
   }
 }
