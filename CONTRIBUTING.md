@@ -27,7 +27,7 @@ Use Node.js 22 or later. These build and test commands need no third-party packa
 
 - Edit public assets in `dist/` and server source in `worker/index.js`; do not hand-edit generated `dist/server/index.js`.
 - Run `npm run build` to embed the current assets and Worker source into `dist/server/index.js`.
-- Run `npm test` before opening a pull request. It rebuilds the Worker, checks JavaScript syntax, and runs the generated-output, security, offline-privacy, refresh-reliability, detail-refresh, and map-focus suites. It stops with a nonzero exit code on the first failure.
+- Run `npm test` before opening a pull request. It rebuilds the Worker, checks JavaScript syntax, and runs the generated-output, submission-privacy, security, offline-privacy, refresh-reliability, detail-refresh, and map-focus suites. It stops with a nonzero exit code on the first failure.
 - Include generated Worker changes with their source changes. `git diff -- dist/server/index.js` shows whether rebuilding changed the checked-in bundle.
 - A static preview of `dist/` provides the UI only; it does not provide the D1-backed API. Test primary flows with a keyboard and narrow viewport when a browser preview is available. The synthetic test suites do not replace browser or production D1 qualification.
 

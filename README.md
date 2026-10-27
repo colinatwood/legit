@@ -146,17 +146,18 @@ Public offline storage holds at most the six supported time-window snapshots for
 
 Public refreshes have a 12-second deadline covering response headers and body, and discard responses superseded by time-window changes or cancellation. Conditional requests use the validator only for the snapshot currently held for that time window. Slider changes clear mismatched data immediately and retain the existing 180ms debounce. Reconnect and visibility events coalesce with an active request; hidden and offline events cancel in-flight work.
 
-Run `npm test` for one-command contributor validation: it regenerates the Worker, checks application and script syntax, and runs all six regression suites, stopping on the first failure. No dependency installation or production credentials are needed. Run `npm run check:generated` first to detect stale committed output without changing it; GitHub CI enforces this order.
+Run `npm test` for one-command contributor validation: it regenerates the Worker, checks application and script syntax, and runs all seven regression suites, stopping on the first failure. No dependency installation or production credentials are needed. Run `npm run check:generated` first to detect stale committed output without changing it; GitHub CI enforces this order.
 
-### Current handoff — 2026-10-26
+### Current handoff — 2026-10-27
 
 - Completed: bounded public offline snapshots, explicit offline status, known-shell-only caching, legacy-cache cleanup, and authoritative public-snapshot replacement; then window-scoped conditional refreshes, deadline/cancellation handling, and reconnect/slider regression coverage.
-- Recovery point before this increment: `backup/legit-before-ci-validation-20261026`, source commit `455b645f9f020dc3e19532118a32f3dd9e7cb094`; deployed v61 remains available as a rollback version. The GitHub mirror also has `backup/before-ci-validation-20261026`.
+- Recovery point before this increment: `backup/legit-before-submission-privacy-20261027`, source commit `edfebe735ed7ffb5671c89e1300d260b40c41bd7`; deployed v62 remains available as a rollback version. The GitHub mirror also has `backup/before-submission-privacy-20261027`.
 - Completed this increment: open mini/detail cards rebind to current public snapshots; correction history and ages refresh in place, including on 304. Evidence buttons retain identity so focus and pending assessments survive refreshes. A 304 avoids rebuilding map markers when visible membership is unchanged.
 - Completed this increment: map and text-list refreshes restore focus to the same visible report; withdrawn, filtered, and expired reports return focus to the time slider. Dialog return targets resolve current report nodes after refresh. Unrelated toolbar/dialog focus remains untouched.
-- Completed this increment: `npm run build` generates the Worker; `npm test` rebuilds, checks syntax, and runs all six suites with failure propagation. Contributor instructions identify source versus generated files.
-- Completed this increment: read-only GitHub CI runs on pushes to main and pull requests, checks generated output before rebuilding, and runs all six regression suites on Node.js 22 and 24. `npm run check:generated` detects stale or missing Worker output without rewriting it.
-- Next safe item: add regression coverage for public submission text/location sanitization and sensitive-report pin suppression using synthetic inputs only.
+- Completed this increment: `npm run build` generates the Worker; `npm test` rebuilds, checks syntax, and runs all seven suites with failure propagation. Contributor instructions identify source versus generated files.
+- Completed this increment: read-only GitHub CI runs on pushes to main and pull requests, checks generated output before rebuilding, and runs all seven regression suites on Node.js 22 and 24. `npm run check:generated` detects stale or missing Worker output without rewriting it.
+- Completed this increment: synthetic submission tests inspect prepared durable values, defaults, pin suppression, URL scrubbing, bounds, and failure paths. Source URLs are parsed before redaction so credentials, query strings, and fragments cannot survive via parse-error fallback. Null, blank, boolean, and container coordinates are no longer coerced into zero. Tests use a recording D1 mock, not production data or a full SQL engine.
+- Next safe item: add SQLite-backed integration coverage for public-query filtering, so pending and sensitive no-pin records are tested against the actual query semantics. Existing stored source records have not been migrated or rewritten.
 - Existing operational follow-up: attach the production retention Cron Trigger and verify moderator credential configuration through supported hosting controls. Real media processing and notification delivery remain deferred.
 
 ## Ordered work backlog

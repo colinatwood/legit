@@ -85,15 +85,23 @@ function sanitizeText(value,max=1000){
     .trim().slice(0,max);
 }
 function roundCoordinate(value){ return Math.round(value * 1000) / 1000; }
-function finiteCoordinate(value,min,max){ const number = Number(value); return Number.isFinite(number) && number >= min && number <= max ? number : null; }
+function finiteCoordinate(value,min,max){ if(!["number","string"].includes(typeof value) || (typeof value === "string" && !value.trim())) return null; const number = Number(value); return Number.isFinite(number) && number >= min && number <= max ? number : null; }
 function publicCoordinate(value){ return roundCoordinate(value); }
 function retentionDate(){ return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); }
 function aggregateArea(value){ return sanitizeText(value,140).replace(/\b\d{1,5}\b/g,"").replace(/\s+/g," ").trim().slice(0,140); }
 function aggregateSource(value){
-  const text = sanitizeText(value,500);
-  if(!text) return "";
-  try { const url = new URL(text); return `${url.origin}${url.pathname}`.slice(0,300); }
-  catch { return text.replace(/\s+/g," ").slice(0,300); }
+  const raw = typeof value === "string" ? value.trim() : "";
+  if(!raw) return "";
+  // Parse before text redaction can invalidate a URL and bypass query removal.
+  try {
+    const url = new URL(raw);
+    if(!["http:","https:"].includes(url.protocol)) return "";
+    return sanitizeText(`${url.origin}${url.pathname}`,300);
+  }catch{
+    // Malformed URL-like input must not fall back to storing credentials/tokens.
+    if(/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("//")) return "";
+    return sanitizeText(raw,500).replace(/\s+/g," ").slice(0,300);
+  }
 }
 function configuredSecret(env,name,message){
   const secret = String(env?.[name] || "");
