@@ -23,14 +23,16 @@ Legit is designed for careful, local, source-aware reporting. Contributions shou
 
 ## Development
 
-Use Node.js 22 or later. These build and test commands need no third-party packages or production credentials.
+Use a current Node.js 22 or 24 release. SQLite integration tests use the built-in `node:sqlite` module. These build and test commands need no third-party packages or production credentials.
 
 - Edit public assets in `dist/` and server source in `worker/index.js`; do not hand-edit generated `dist/server/index.js`.
 - Run `npm run build` to embed the current assets and Worker source into `dist/server/index.js`.
-- Run `npm test` before opening a pull request. It rebuilds the Worker, checks JavaScript syntax, and runs the generated-output, submission-privacy, security, offline-privacy, refresh-reliability, detail-refresh, and map-focus suites. It stops with a nonzero exit code on the first failure.
+- Run `npm test` before opening a pull request. It rebuilds the Worker, checks JavaScript syntax, and runs the generated-output, SQLite privacy integration, submission-privacy, security, offline-privacy, refresh-reliability, detail-refresh, and map-focus suites. It stops with a nonzero exit code on the first failure.
 - Include generated Worker changes with their source changes. `git diff -- dist/server/index.js` shows whether rebuilding changed the checked-in bundle.
 - A static preview of `dist/` provides the UI only; it does not provide the D1-backed API. Test primary flows with a keyboard and narrow viewport when a browser preview is available. The synthetic test suites do not replace browser or production D1 qualification.
 
 ## Continuous integration
 
 GitHub Actions runs validation for pushes to `main`, pull requests, and manual runs on Node.js 22 and 24. It uses read-only repository permissions and no production credentials. Run `npm run check:generated` **before** `npm test` to catch a stale checked-in Worker without rewriting it. If it fails, run `npm run build` and commit the generated output with its source changes. CI also checks that the tests leave generated output unchanged.
+
+The SQLite privacy suite applies every canonical migration to an in-memory database, adapts the D1 statement methods, and invokes the built Worker routes with synthetic submissions. It checks real SQL joins and constraints. It does not qualify Cloudflare D1 service behavior, concurrency, or production data.

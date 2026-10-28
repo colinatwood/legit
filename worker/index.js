@@ -224,8 +224,10 @@ async function persistHappening(env,item,request){
   await ensurePrivacySchema(env);
   const owner = hasAuthenticatedPrincipal(request) ? await ownerKey(env,request) : null;
   const claimId = `claim-${item.id}`;
+  // The canonical precision enum is aggregate/exact; sensitive reports keep null pins.
+  const storedPrecision = item.locationPrecision === "aggregate-sensitive-no-pin" ? "aggregate" : item.locationPrecision;
   const statements = [
-    env.DB.prepare(`INSERT INTO happenings (id,title,body,topic,public_location,public_lat,public_lng,location_precision,identity_visibility,identity_display,impact,balance,legitimacy_score,review_state,attachment_state,attachment_count,created_at,retention_until,owner_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(item.id,item.title,item.body,item.topic,item.location,item.publicLat,item.publicLng,item.locationPrecision,item.identityVisibility,item.identityDisplay,1,item.balance,0,item.reviewState,item.attachmentState,item.attachmentCount,item.createdAt,item.retentionUntil,owner),
+    env.DB.prepare(`INSERT INTO happenings (id,title,body,topic,public_location,public_lat,public_lng,location_precision,identity_visibility,identity_display,impact,balance,legitimacy_score,review_state,attachment_state,attachment_count,created_at,retention_until,owner_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(item.id,item.title,item.body,item.topic,item.location,item.publicLat,item.publicLng,storedPrecision,item.identityVisibility,item.identityDisplay,1,item.balance,0,item.reviewState,item.attachmentState,item.attachmentCount,item.createdAt,item.retentionUntil,owner),
     env.DB.prepare(`INSERT INTO claims (id,happening_id,text,status,attribution,created_at) VALUES (?,?,?,?,?,?)`).bind(claimId,item.id,item.body,"unverified","Queued through the server-side privacy and moderation gate.",item.createdAt)
   ];
   if(item.source){

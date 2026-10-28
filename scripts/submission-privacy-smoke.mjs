@@ -36,7 +36,8 @@ for(const identityVisibility of [undefined,"attributed"]){
  const r=await post({...base,sensitive:true,identityVisibility,displayIdentity:"Synthetic contributor"});
  assert.equal(r.response.status,202);
  for(const value of [r.happening.public_lat,r.happening.public_lng,r.body.happening.publicLat,r.body.happening.publicLng]) assert.equal(value,null);
- assert.equal(r.happening.location_precision,"aggregate-sensitive-no-pin");
+ assert.equal(r.happening.location_precision,"aggregate");
+ assert.equal(r.body.happening.locationPrecision,"aggregate-sensitive-no-pin");
 }
 // Null/blank/boolean/container coordinates must not be coerced into a pin at zero.
 for(const invalid of [null,"", "   ",false,true,[],[1],{},"NaN"]){
