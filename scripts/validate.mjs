@@ -12,5 +12,5 @@ function run(args){
 run(["scripts/build-worker.mjs"]);
 const scripts=readdirSync(new URL("./",import.meta.url)).filter(name => name.endsWith(".mjs")).sort();
 for(const file of ["dist/app.js","dist/sw.js","worker/index.js","dist/server/index.js",...scripts.map(name => `scripts/${name}`)]) run(["--check",file]);
-for(const suite of ["generated-output","sqlite-privacy","submission-privacy","security","offline-privacy","refresh-reliability","detail-refresh","map-focus"]) run([`scripts/${suite}-smoke.mjs`]);
-console.log("Validation passed: Worker regenerated, JavaScript syntax checked, and all eight regression suites passed.");
+for(const suite of ["generated-output","retention-sqlite","sqlite-privacy","submission-privacy","security","offline-privacy","refresh-reliability","detail-refresh","map-focus"]) run([`scripts/${suite}-smoke.mjs`]);
+console.log("Validation passed: Worker regenerated, JavaScript syntax checked, and all nine regression suites passed.");
