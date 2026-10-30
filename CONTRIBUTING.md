@@ -27,7 +27,7 @@ Use a current Node.js 22 or 24 release. SQLite integration tests use the built-i
 
 - Edit public assets in `dist/` and server source in `worker/index.js`; do not hand-edit generated `dist/server/index.js`.
 - Run `npm run build` to embed the current assets and Worker source into `dist/server/index.js`.
-- Run `npm test` before opening a pull request. It rebuilds the Worker, checks JavaScript syntax, and runs the generated-output, SQLite retention integration, SQLite privacy integration, submission-privacy, security, offline-privacy, refresh-reliability, detail-refresh, and map-focus suites. It stops with a nonzero exit code on the first failure.
+- Run `npm test` before opening a pull request. It rebuilds the Worker, checks JavaScript syntax, and runs the generated-output, SQLite profile isolation, SQLite retention integration, SQLite privacy integration, submission-privacy, security, offline-privacy, refresh-reliability, detail-refresh, and map-focus suites. It stops with a nonzero exit code on the first failure.
 - Include generated Worker changes with their source changes. `git diff -- dist/server/index.js` shows whether rebuilding changed the checked-in bundle.
 - A static preview of `dist/` provides the UI only; it does not provide the D1-backed API. Test primary flows with a keyboard and narrow viewport when a browser preview is available. The synthetic test suites do not replace browser or production D1 qualification.
 
@@ -38,3 +38,5 @@ GitHub Actions runs validation for pushes to `main`, pull requests, and manual r
 The SQLite privacy suite applies every canonical migration to an in-memory database, adapts the D1 statement methods, and invokes the built Worker routes with synthetic submissions. It checks real SQL joins and constraints. It does not qualify Cloudflare D1 service behavior, concurrency, or production data.
 
 The retention SQLite suite invokes the existing scheduled Worker handler with synthetic in-memory records. It verifies policy cutoffs, dependent-record cleanup, audit counts, idempotency, and rollback of the parent/dependents/audit batch when its audit insert fails. Auxiliary housekeeping uses its existing separate batch. The suite does not change production retention rules or qualify hosted D1 transaction/concurrency behavior.
+
+The profile SQLite suite exercises export and deletion through real Worker routes for two synthetic principals and anonymous contributions. It verifies owner isolation, prepared input spoof rejection, dependent cleanup, audit counts, and full rollback when the profile audit insert fails. Trusted identity headers are simulated locally; this does not qualify the hosting identity-injection boundary.
