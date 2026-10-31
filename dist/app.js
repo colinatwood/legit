@@ -367,8 +367,9 @@ function setProfileControls(enabled,profile){
   if(profile){ limit.checked=profile.controls.limitSensitive; document.getElementById("profileDataSummary").textContent=`${profile.dataSummary.happenings} profile-linked happening${profile.dataSummary.happenings === 1 ? "" : "s"} · ${profile.dataSummary.deskItems || 0} desk item${profile.dataSummary.deskItems === 1 ? "" : "s"} · ${profile.dataSummary.pending} pending review`; document.getElementById("profileReputationSummary").textContent=`${profile.dataSummary.reputationPoints || 0} Legit point${(profile.dataSummary.reputationPoints || 0) === 1 ? "" : "s"} earned · ${profile.dataSummary.confirmedReputationPoints || 0} confirmed from useful-evidence assessments · ${profile.dataSummary.heldReputationEvents || 0} held for coordination review`; } else { limit.checked=true; document.getElementById("profileReputationSummary").textContent="Sign in to view your privacy-safe reputation ledger."; }
 }
 async function loadPrivacyProfile(){
+  const generation=deskState.generation;
   const summary=document.getElementById("profileDataSummary"); summary.textContent="Checking profile-linked data…";
-  try{ const response=await fetch("/api/profile/privacy",{headers:{accept:"application/json"}}); const data=await response.json().catch(() => ({})); if(response.status === 401){ setProfileControls(false); summary.textContent="Sign in to view or manage profile-linked data. Anonymous contributions remain aggregated."; return; } if(!response.ok) throw new Error(data.error || "Privacy controls are unavailable."); setProfileControls(true,data); }catch(error){ setProfileControls(false); summary.textContent=error.message || "Privacy controls are unavailable."; }
+  try{ const response=await fetch("/api/profile/privacy",{headers:{accept:"application/json"}}); const data=await response.json().catch(() => ({})); if(generation !== deskState.generation) return; if(response.status === 401){ setProfileControls(false); summary.textContent="Sign in to view or manage profile-linked data. Anonymous contributions remain aggregated."; return; } if(!response.ok) throw new Error(data.error || "Privacy controls are unavailable."); setProfileControls(true,data); }catch(error){ if(generation !== deskState.generation) return; setProfileControls(false); summary.textContent=error.message || "Privacy controls are unavailable."; }
 }
 async function savePrivacyPreferences(){
   const summary=document.getElementById("profileDataSummary"); summary.textContent="Saving privacy preferences…";
@@ -387,8 +388,31 @@ async function deleteAllProfileData(){
   if(deskState.pending || deskState.deleting){ showToast("Please wait for the desk update to finish"); return; }
   if(!window.confirm("Delete all data linked to this signed-in profile? This removes your profile-linked happenings, evidence, and privacy preferences. Anonymous aggregated reports are not linked to this profile.")) return;
   const button=document.getElementById("deleteAllData"); const summary=document.getElementById("profileDataSummary"); deskState.deleting=true; button.disabled=true; summary.textContent="Deleting profile-linked data…";
-  try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"delete_all"})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Profile data could not be deleted."); deskState.generation++; deskState.server=true; deskState.keys.clear(); applyDeskState(); document.getElementById("correctionDetails").value=""; setProfileControls(true,{controls:{optOutSharing:true,limitSensitive:true},dataSummary:{happenings:0,pending:0,reputationEvents:0}}); summary.textContent=`Deleted ${data.deletion?.deletedHappenings || 0} profile-linked happening${data.deletion?.deletedHappenings === 1 ? "" : "s"} and ${data.deletion?.deletedReputationEvents || 0} reputation event${data.deletion?.deletedReputationEvents === 1 ? "" : "s"}.`; showToast("All profile-linked data was deleted"); }catch(error){ summary.textContent=error.message || "Profile data could not be deleted."; button.disabled=false; }finally{ deskState.deleting=false; }
+  try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"delete_all"})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Profile data could not be deleted."); deskState.generation++; deskState.server=true; deskState.keys.clear(); applyDeskState(); document.getElementById("correctionDetails").value=""; setProfileControls(true,{controls:{optOutSharing:true,limitSensitive:true},dataSummary:{happenings:0,pending:0,reputationEvents:0}}); summary.textContent=`Deleted ${data.deletion?.deletedHappenings || 0} profile-linked happening${data.deletion?.deletedHappenings === 1 ? "" : "s"} and ${data.deletion?.deletedReputationEvents || 0} reputation event${data.deletion?.deletedReputationEvents === 1 ? "" : "s"}.`; notifyProfileChange(); showToast("All profile-linked data was deleted"); }catch(error){ summary.textContent=error.message || "Profile data could not be deleted."; button.disabled=false; }finally{ deskState.deleting=false; }
 }
+
+// Cross-tab messages are invalidations only: never send identity or profile content.
+let profileChannel=null;
+let profileRefreshPending=false;
+async function refreshProfileState(){
+  if(profileRefreshPending || deskState.deleting) return;
+  profileRefreshPending=true;
+  deskState.generation++;
+  if(deskState.server){ deskState.keys.clear(); applyDeskState(); }
+  setProfileControls(false);
+  try{ await Promise.all([loadDesk(),loadPrivacyProfile()]); }
+  finally{ profileRefreshPending=false; }
+}
+function notifyProfileChange(){ try{ profileChannel?.postMessage({type:"profile-changed"}); }catch{} }
+function setupProfileRefresh(){
+  try{
+    profileChannel=new BroadcastChannel("legit-profile-refresh");
+    profileChannel.onmessage=event => { if(event.data?.type === "profile-changed") refreshProfileState(); };
+  }catch{}
+  // Also recover missed messages and browsers without BroadcastChannel support.
+  window.addEventListener("focus",() => refreshProfileState());
+}
+setupProfileRefresh();
 
 document.getElementById("openMethodology").addEventListener("click",() => { closeActions(); showModal("methodologyModal"); loadTransparencySummary(); });
 document.getElementById("dismissWelcome").addEventListener("click",() => { try{ localStorage.setItem("legit-welcome-seen","1"); }catch{} closeModal("welcomeModal"); });

@@ -6,7 +6,7 @@ const nodes=new Map();
 const document={getElementById(id){if(!nodes.has(id)) nodes.set(id,{value:"",textContent:"",disabled:false,checked:false}); return nodes.get(id);}};
 const storage=new Map([["legit-accessibility","accessible"],["legit-desk",'["anonymous-save"]']]);
 const localStorage={getItem:key=>storage.get(key) ?? null,setItem:(key,value)=>storage.set(key,value)};
-const context={document,localStorage,window:{confirm:()=>true},Set,showToast:()=>{},renderMarkers:()=>{}};
+const context={document,localStorage,window:{confirm:()=>true,addEventListener:()=>{}},Set,showToast:()=>{},renderMarkers:()=>{}};
 vm.createContext(context);
 vm.runInContext('const deskStorageKey="legit-desk"; const deskState={server:true,keys:new Set(["profile-save"]),generation:0,pending:0,deleting:false}; const happenings=[{id:1,serverId:"profile-save",saved:true}];',context);
 vm.runInContext(app.slice(app.indexOf('function deskKey('),app.indexOf('async function submitReport(')),context);
