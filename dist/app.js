@@ -394,14 +394,16 @@ async function deleteAllProfileData(){
 // Cross-tab messages are invalidations only: never send identity or profile content.
 let profileChannel=null;
 let profileRefreshPending=false;
+let profileRefreshAgain=false;
 async function refreshProfileState(){
-  if(profileRefreshPending || deskState.deleting) return;
+  if(deskState.deleting) return;
+  if(profileRefreshPending){ deskState.generation++; profileRefreshAgain=true; return; }
   profileRefreshPending=true;
   deskState.generation++;
   if(deskState.server){ deskState.keys.clear(); applyDeskState(); }
   setProfileControls(false);
   try{ await Promise.all([loadDesk(),loadPrivacyProfile()]); }
-  finally{ profileRefreshPending=false; }
+  finally{ profileRefreshPending=false; if(profileRefreshAgain){ profileRefreshAgain=false; refreshProfileState(); } }
 }
 function notifyProfileChange(){ try{ profileChannel?.postMessage({type:"profile-changed"}); }catch{} }
 function setupProfileRefresh(){
