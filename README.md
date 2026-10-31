@@ -181,3 +181,5 @@ See [SECURITY.md](./SECURITY.md) for the reporting process and current security 
 Apache-2.0. See [LICENSE](./LICENSE).
 
 Profile deletion refreshes other open tabs through an identity-free BroadcastChannel invalidation. Each receiving tab reloads its own authenticated profile and desk; window focus also revalidates state when messages are missed or unsupported. This is a browser-state refresh, not a server-wide lock on simultaneous writes from other tabs or devices.
+
+Desk outages block edits and hide stale saved flags until revalidation succeeds. Only an explicit anonymous (401) response enables browser-local saves; server/network errors never silently switch storage modes.

@@ -38,4 +38,17 @@ const count=fallback.calls();fallback.run('deskState.deleting=true');await fallb
 // Failed deletion must not notify other tabs.
 a.context.fetch=async()=>new Response('{"error":"denied"}',{status:403});await a.run('deleteAllProfileData()');assert.equal(messages.length,1);
 a.context.fetch=async()=>new Response(JSON.stringify({deletion:{deletedHappenings:1}}));await a.run('deleteAllProfileData()');assert.equal(messages.length,2,'successful deletion notifies peer tabs');
+// Outages and malformed responses never become anonymous local-save mode.
+const outage=tab();let writes=0;
+outage.context.localStorage={getItem:()=> '["anonymous-old"]',setItem:()=>{writes++;}};
+for(const failure of [()=>{throw new Error('offline');},()=>new Response('{}',{status:503}),()=>new Response('{}',{status:403}),()=>new Response('{"items":[null]}')]){
+  outage.context.fetch=async()=>failure();await outage.run('loadDesk()');
+  assert.equal(outage.run('deskState.available'),false);assert.equal(outage.run('deskState.keys.size'),0);
+  await outage.run('toggleDesk(happenings[0])');assert.equal(writes,0);
+}
+outage.context.fetch=async()=>new Response('{"items":[{"happening_key":"old"}]}');await outage.run('loadDesk()');
+assert.equal(outage.run('deskState.available && deskState.server'),true);assert.equal(outage.run('happenings[0].saved'),true);
+outage.context.fetch=async()=>new Response('{}',{status:401});await outage.run('loadDesk()');
+assert.equal(outage.run('deskState.server'),false);assert.equal(outage.run('deskState.keys.has("anonymous-old")'),true);
+await outage.run('toggleDesk(happenings[0])');assert.equal(writes,1,'confirmed anonymous mode keeps browser-local saves');
 console.log('Profile tabs smoke passed: identity-free invalidation, stale profile fencing, authoritative desk refresh, focus fallback, deletion guard, and no failure notification.');

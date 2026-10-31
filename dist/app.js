@@ -32,7 +32,7 @@ const userState = {points:128};
 const accessibilityKey = "legit-accessibility";
 const accessibilityState = {textSize:"default",highContrast:false,reducedMotion:false,mapLabels:false};
 const deskStorageKey = "legit-desk";
-const deskState = {server:false,keys:new Set(),generation:0,pending:0,deleting:false};
+const deskState = {server:false,keys:new Set(),generation:0,pending:0,deleting:false,available:false};
 let lastFocusedElement = null;
 let lastFocusedSignal = null;
 
@@ -324,15 +324,17 @@ function saveLocalDesk(){ try{ localStorage.setItem(deskStorageKey,JSON.stringif
 function applyDeskState(){ happenings.forEach(item => { item.saved=deskState.keys.has(deskKey(item)); }); }
 async function loadDesk(){
   const localKeys=readLocalDesk(); const generation=deskState.generation;
+  deskState.available=false;
   try{
     const response=await fetch("/api/desk",{headers:{accept:"application/json"}});
     if(generation !== deskState.generation) return;
-    if(response.status === 401){ deskState.server=false; deskState.keys=localKeys; applyDeskState(); return; }
+    if(response.status === 401){ deskState.server=false; deskState.available=true; deskState.keys=localKeys; applyDeskState(); return; }
     if(!response.ok) throw new Error("Desk is unavailable.");
-    const data=await response.json(); if(generation !== deskState.generation) return; deskState.server=true; deskState.keys=new Set((data.items || []).map(item => item.happening_key)); applyDeskState(); renderMarkers();
-  }catch{ if(generation !== deskState.generation) return; deskState.server=false; deskState.keys=localKeys; applyDeskState(); }
+    const data=await response.json(); if(generation !== deskState.generation) return; if(!Array.isArray(data.items) || data.items.some(item => !item || typeof item.happening_key !== "string")) throw new Error("Invalid desk response."); deskState.server=true; deskState.available=true; deskState.keys=new Set(data.items.map(item => item.happening_key)); applyDeskState(); renderMarkers();
+  }catch{ if(generation !== deskState.generation) return; deskState.available=false; deskState.keys.clear(); applyDeskState(); }
 }
 async function toggleDesk(item){
+  if(deskState.available === false){ showToast("Saved stories are unavailable. Reconnect or reopen your profile to retry."); return; }
   if(deskState.deleting){ showToast("Please wait for profile deletion to finish"); return; }
   const generation=deskState.generation; const key=deskKey(item); const next=!item.saved; item.saved=next; if(next) deskState.keys.add(key); else deskState.keys.delete(key); if(!deskState.server) saveLocalDesk(); showToast(next ? "Added to your desk" : "Removed from your desk");
   if(!deskState.server) return;
@@ -388,7 +390,7 @@ async function deleteAllProfileData(){
   if(deskState.pending || deskState.deleting){ showToast("Please wait for the desk update to finish"); return; }
   if(!window.confirm("Delete all data linked to this signed-in profile? This removes your profile-linked happenings, evidence, and privacy preferences. Anonymous aggregated reports are not linked to this profile.")) return;
   const button=document.getElementById("deleteAllData"); const summary=document.getElementById("profileDataSummary"); deskState.deleting=true; button.disabled=true; summary.textContent="Deleting profile-linked data…";
-  try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"delete_all"})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Profile data could not be deleted."); deskState.generation++; deskState.server=true; deskState.keys.clear(); applyDeskState(); document.getElementById("correctionDetails").value=""; setProfileControls(true,{controls:{optOutSharing:true,limitSensitive:true},dataSummary:{happenings:0,pending:0,reputationEvents:0}}); summary.textContent=`Deleted ${data.deletion?.deletedHappenings || 0} profile-linked happening${data.deletion?.deletedHappenings === 1 ? "" : "s"} and ${data.deletion?.deletedReputationEvents || 0} reputation event${data.deletion?.deletedReputationEvents === 1 ? "" : "s"}.`; notifyProfileChange(); showToast("All profile-linked data was deleted"); }catch(error){ summary.textContent=error.message || "Profile data could not be deleted."; button.disabled=false; }finally{ deskState.deleting=false; }
+  try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"delete_all"})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Profile data could not be deleted."); deskState.generation++; deskState.server=true; deskState.available=true; deskState.keys.clear(); applyDeskState(); document.getElementById("correctionDetails").value=""; setProfileControls(true,{controls:{optOutSharing:true,limitSensitive:true},dataSummary:{happenings:0,pending:0,reputationEvents:0}}); summary.textContent=`Deleted ${data.deletion?.deletedHappenings || 0} profile-linked happening${data.deletion?.deletedHappenings === 1 ? "" : "s"} and ${data.deletion?.deletedReputationEvents || 0} reputation event${data.deletion?.deletedReputationEvents === 1 ? "" : "s"}.`; notifyProfileChange(); showToast("All profile-linked data was deleted"); }catch(error){ summary.textContent=error.message || "Profile data could not be deleted."; button.disabled=false; }finally{ deskState.deleting=false; }
 }
 
 // Cross-tab messages are invalidations only: never send identity or profile content.
