@@ -323,24 +323,28 @@ function readLocalDesk(){ try{ const saved=JSON.parse(localStorage.getItem(deskS
 function saveLocalDesk(){ try{ localStorage.setItem(deskStorageKey,JSON.stringify([...deskState.keys])); }catch{} }
 function applyDeskState(){ happenings.forEach(item => { item.saved=deskState.keys.has(deskKey(item)); }); }
 async function loadDesk(){
+  const requestId=deskState.requestId=(deskState.requestId || 0)+1;
+  if(deskState.pending){ deskState.reload=true; deskState.available=false; return; }
   const localKeys=readLocalDesk(); const generation=deskState.generation;
   deskState.available=false;
   try{
     const response=await fetch("/api/desk",{headers:{accept:"application/json"}});
-    if(generation !== deskState.generation) return;
+    if(generation !== deskState.generation || requestId !== deskState.requestId) return;
     if(response.status === 401){ deskState.server=false; deskState.available=true; deskState.keys=localKeys; applyDeskState(); return; }
     if(!response.ok) throw new Error("Desk is unavailable.");
-    const data=await response.json(); if(generation !== deskState.generation) return; if(!Array.isArray(data.items) || data.items.some(item => !item || typeof item.happening_key !== "string")) throw new Error("Invalid desk response."); deskState.server=true; deskState.available=true; deskState.keys=new Set(data.items.map(item => item.happening_key)); applyDeskState(); renderMarkers();
-  }catch{ if(generation !== deskState.generation) return; deskState.available=false; deskState.keys.clear(); applyDeskState(); }
+    const data=await response.json(); if(generation !== deskState.generation || requestId !== deskState.requestId) return; if(!Array.isArray(data.items) || data.items.some(item => !item || typeof item.happening_key !== "string")) throw new Error("Invalid desk response."); deskState.server=true; deskState.available=true; deskState.keys=new Set(data.items.map(item => item.happening_key)); applyDeskState(); renderMarkers();
+  }catch{ if(generation !== deskState.generation || requestId !== deskState.requestId) return; deskState.available=false; deskState.keys.clear(); applyDeskState(); }
 }
 async function toggleDesk(item){
+  if(deskState.pending){ showToast("Please wait for the saved-story update to finish"); return; }
   if(deskState.available === false){ showToast("Saved stories are unavailable. Reconnect or reopen your profile to retry."); return; }
   if(deskState.deleting){ showToast("Please wait for profile deletion to finish"); return; }
+  deskState.requestId=(deskState.requestId || 0)+1;
   const generation=deskState.generation; const key=deskKey(item); const next=!item.saved; item.saved=next; if(next) deskState.keys.add(key); else deskState.keys.delete(key); if(!deskState.server) saveLocalDesk(); showToast(next ? "Added to your desk" : "Removed from your desk");
   if(!deskState.server) return;
   deskState.pending++;
   try{ const response=await fetch("/api/desk",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:next ? "save" : "remove",happeningKey:key})}); if(!response.ok) throw new Error("Desk could not be updated."); }
-  catch{ if(generation !== deskState.generation) return; item.saved=!next; if(next) deskState.keys.delete(key); else deskState.keys.add(key); showToast("Desk could not be updated; try again"); }finally{ deskState.pending--; }
+  catch{ if(generation !== deskState.generation) return; item.saved=!next; if(next) deskState.keys.delete(key); else deskState.keys.add(key); showToast("Desk could not be updated; try again"); }finally{ deskState.pending--; if(deskState.reload){ deskState.reload=false; loadDesk(); } }
 }
 async function submitReport(event){
   event.preventDefault();
