@@ -185,3 +185,5 @@ Profile deletion refreshes other open tabs through an identity-free BroadcastCha
 Desk outages block edits and hide stale saved flags until revalidation succeeds. Only an explicit anonymous (401) response enables browser-local saves; server/network errors never silently switch storage modes.
 
 Within each tab, only the newest desk read can update saved state. Desk writes run one at a time, and reads requested during a write coalesce into a refresh after it settles. This does not serialize writes across tabs or devices.
+
+Desk requests have a 12-second client deadline, including JSON body parsing for reads. A timed-out write has an unknown server outcome: edits pause until revalidation, and the app never automatically replays that write. Aborting the client request does not undo a server-side write.

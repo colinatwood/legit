@@ -10,7 +10,7 @@ class Channel {
 const profile={controls:{limitSensitive:true},dataSummary:{happenings:0,deskItems:0,pending:0}};
 function tab(supported=true){
   const nodes=new Map(), listeners={};let calls=0;
-  const context={Set,Promise,BroadcastChannel:supported?Channel:undefined,showToast:()=>{},renderMarkers:()=>{},localStorage:{getItem:()=>null},window:{confirm:()=>true,addEventListener:(type,fn)=>{listeners[type]=fn;}},document:{getElementById(id){if(!nodes.has(id))nodes.set(id,{hidden:false,textContent:'',value:'',disabled:false});return nodes.get(id);}}};
+  const context={AbortController,setTimeout,clearTimeout,Set,Promise,BroadcastChannel:supported?Channel:undefined,showToast:()=>{},renderMarkers:()=>{},localStorage:{getItem:()=>null},window:{confirm:()=>true,addEventListener:(type,fn)=>{listeners[type]=fn;}},document:{getElementById(id){if(!nodes.has(id))nodes.set(id,{hidden:false,textContent:'',value:'',disabled:false});return nodes.get(id);}}};
   context.fetch=async url=>{calls++;return new Response(JSON.stringify(url==='/api/desk'?{items:[]}:url==='/api/profile/privacy'?profile:{}));};
   vm.createContext(context);
   const run=code=>vm.runInContext(code,context);

@@ -5,7 +5,7 @@ const app=await readFile('dist/app.js','utf8');
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 function harness(){
  const calls=[],storage=[];
- const context={Set,localStorage:{getItem:()=> '["local"]',setItem:(...args)=>storage.push(args)},renderMarkers:()=>{},showToast:()=>{},fetch:(url,options)=>{const task=deferred();calls.push({url,options,...task});return task.promise;}};
+ const context={AbortController,setTimeout,clearTimeout,Set,localStorage:{getItem:()=> '["local"]',setItem:(...args)=>storage.push(args)},renderMarkers:()=>{},showToast:()=>{},fetch:(url,options)=>{const task=deferred();calls.push({url,options,...task});return task.promise;}};
  vm.createContext(context);
  const run=code=>vm.runInContext(code,context);
  run('const deskStorageKey="legit-desk";const deskState={server:true,keys:new Set(),generation:0,pending:0,deleting:false,available:true};const happenings=[{serverId:"story",saved:false}];');

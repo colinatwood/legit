@@ -319,6 +319,21 @@ async function recordEvidenceAssessment(item,button){
   try{ const response=await fetch("/api/reputation/assessment",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({targetId:`${item.id}:${evidenceId}`,actionType:"evidence_useful"})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Useful evidence could not be recorded."); const assessment=data.assessment || {}; if(assessment.accepted) userState.points += assessment.pointsAwarded || 0; const held=assessment.riskState === "coordination_review"; button.textContent=assessment.accepted ? (held ? "✓ held for review" : "✓ counted") : "already counted"; showToast(assessment.accepted ? (held ? "Useful evidence recorded; points are held for coordination review" : `Useful evidence added · +${assessment.pointsAwarded} point${assessment.pointsAwarded === 1 ? "" : "s"}`) : (assessment.reason || "This assessment was already counted")); }catch(error){ button.disabled=false; showToast(error.message || "Useful evidence could not be recorded."); }
 }
 function deskKey(item){ return item.serverId || `demo-${item.id}`; }
+// Keep the deadline active through JSON parsing, not only response headers.
+async function deskRequest(options,readBody=false){
+  const controller=new AbortController();
+  let timer;
+  const deadline=new Promise((_,reject) => {
+    timer=setTimeout(() => { const error=new Error("Saved-story request timed out."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
+  });
+  try{
+    return await Promise.race([deadline,(async () => {
+      const response=await fetch("/api/desk",{...options,signal:controller.signal});
+      const data=readBody && response.ok ? await response.json() : null;
+      return {response,data};
+    })()]);
+  }finally{ clearTimeout(timer); }
+}
 function readLocalDesk(){ try{ const saved=JSON.parse(localStorage.getItem(deskStorageKey)||"[]"); return new Set(Array.isArray(saved) ? saved.filter(value => typeof value === "string") : []); }catch{ return new Set(); } }
 function saveLocalDesk(){ try{ localStorage.setItem(deskStorageKey,JSON.stringify([...deskState.keys])); }catch{} }
 function applyDeskState(){ happenings.forEach(item => { item.saved=deskState.keys.has(deskKey(item)); }); }
@@ -328,11 +343,11 @@ async function loadDesk(){
   const localKeys=readLocalDesk(); const generation=deskState.generation;
   deskState.available=false;
   try{
-    const response=await fetch("/api/desk",{headers:{accept:"application/json"}});
+    const {response,data}=await deskRequest({headers:{accept:"application/json"}},true);
     if(generation !== deskState.generation || requestId !== deskState.requestId) return;
     if(response.status === 401){ deskState.server=false; deskState.available=true; deskState.keys=localKeys; applyDeskState(); return; }
     if(!response.ok) throw new Error("Desk is unavailable.");
-    const data=await response.json(); if(generation !== deskState.generation || requestId !== deskState.requestId) return; if(!Array.isArray(data.items) || data.items.some(item => !item || typeof item.happening_key !== "string")) throw new Error("Invalid desk response."); deskState.server=true; deskState.available=true; deskState.keys=new Set(data.items.map(item => item.happening_key)); applyDeskState(); renderMarkers();
+    if(!Array.isArray(data.items) || data.items.some(item => !item || typeof item.happening_key !== "string")) throw new Error("Invalid desk response."); deskState.server=true; deskState.available=true; deskState.keys=new Set(data.items.map(item => item.happening_key)); applyDeskState(); renderMarkers();
   }catch{ if(generation !== deskState.generation || requestId !== deskState.requestId) return; deskState.available=false; deskState.keys.clear(); applyDeskState(); }
 }
 async function toggleDesk(item){
@@ -343,8 +358,8 @@ async function toggleDesk(item){
   const generation=deskState.generation; const key=deskKey(item); const next=!item.saved; item.saved=next; if(next) deskState.keys.add(key); else deskState.keys.delete(key); if(!deskState.server) saveLocalDesk(); showToast(next ? "Added to your desk" : "Removed from your desk");
   if(!deskState.server) return;
   deskState.pending++;
-  try{ const response=await fetch("/api/desk",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:next ? "save" : "remove",happeningKey:key})}); if(!response.ok) throw new Error("Desk could not be updated."); }
-  catch{ if(generation !== deskState.generation) return; item.saved=!next; if(next) deskState.keys.delete(key); else deskState.keys.add(key); showToast("Desk could not be updated; try again"); }finally{ deskState.pending--; if(deskState.reload){ deskState.reload=false; loadDesk(); } }
+  try{ const {response}=await deskRequest({method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:next ? "save" : "remove",happeningKey:key})}); if(!response.ok) throw new Error("Desk could not be updated."); }
+  catch(error){ if(generation !== deskState.generation) return; if(error.deskTimeout){ deskState.available=false; deskState.keys.clear(); applyDeskState(); showToast("Saved-story update timed out; its outcome is unknown. Reopen your profile to refresh before trying again."); return; } item.saved=!next; if(next) deskState.keys.delete(key); else deskState.keys.add(key); showToast("Desk could not be updated; try again"); }finally{ deskState.pending--; if(deskState.reload){ deskState.reload=false; loadDesk(); } }
 }
 async function submitReport(event){
   event.preventDefault();
