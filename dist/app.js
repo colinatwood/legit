@@ -320,15 +320,15 @@ async function recordEvidenceAssessment(item,button){
 }
 function deskKey(item){ return item.serverId || `demo-${item.id}`; }
 // Keep the deadline active through JSON parsing, not only response headers.
-async function deskRequest(options,readBody=false){
+async function boundedAccountRequest(path,options,readBody=false){
   const controller=new AbortController();
   let timer;
   const deadline=new Promise((_,reject) => {
-    timer=setTimeout(() => { const error=new Error("Saved-story request timed out."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
+    timer=setTimeout(() => { const error=new Error(path === "/api/desk" ? "Saved-story request timed out." : "Profile read timed out. Reopen your profile to retry."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
   });
   try{
     return await Promise.race([deadline,(async () => {
-      const response=await fetch("/api/desk",{...options,signal:controller.signal});
+      const response=await fetch(path,{...options,signal:controller.signal});
       const data=readBody && response.ok ? await response.json() : null;
       return {response,data};
     })()]);
@@ -343,7 +343,7 @@ async function loadDesk(){
   const localKeys=readLocalDesk(); const generation=deskState.generation;
   deskState.available=false;
   try{
-    const {response,data}=await deskRequest({headers:{accept:"application/json"}},true);
+    const {response,data}=await boundedAccountRequest("/api/desk",{headers:{accept:"application/json"}},true);
     if(generation !== deskState.generation || requestId !== deskState.requestId) return;
     if(response.status === 401){ deskState.server=false; deskState.available=true; deskState.keys=localKeys; applyDeskState(); return; }
     if(!response.ok) throw new Error("Desk is unavailable.");
@@ -358,7 +358,7 @@ async function toggleDesk(item){
   const generation=deskState.generation; const key=deskKey(item); const next=!item.saved; item.saved=next; if(next) deskState.keys.add(key); else deskState.keys.delete(key); if(!deskState.server) saveLocalDesk(); showToast(next ? "Added to your desk" : "Removed from your desk");
   if(!deskState.server) return;
   deskState.pending++;
-  try{ const {response}=await deskRequest({method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:next ? "save" : "remove",happeningKey:key})}); if(!response.ok) throw new Error("Desk could not be updated."); }
+  try{ const {response}=await boundedAccountRequest("/api/desk",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:next ? "save" : "remove",happeningKey:key})}); if(!response.ok) throw new Error("Desk could not be updated."); }
   catch(error){ if(generation !== deskState.generation) return; if(error.deskTimeout){ deskState.available=false; deskState.keys.clear(); applyDeskState(); showToast("Saved-story update timed out; its outcome is unknown. Reopen your profile to refresh before trying again."); return; } item.saved=!next; if(next) deskState.keys.delete(key); else deskState.keys.add(key); showToast("Desk could not be updated; try again"); }finally{ deskState.pending--; if(deskState.reload){ deskState.reload=false; loadDesk(); } }
 }
 async function submitReport(event){
@@ -389,8 +389,20 @@ function setProfileControls(enabled,profile){
 }
 async function loadPrivacyProfile(){
   const generation=deskState.generation;
+  const requestId=deskState.profileRequestId=(deskState.profileRequestId || 0)+1;
+  setProfileControls(false);
   const summary=document.getElementById("profileDataSummary"); summary.textContent="Checking profile-linked data…";
-  try{ const response=await fetch("/api/profile/privacy",{headers:{accept:"application/json"}}); const data=await response.json().catch(() => ({})); if(generation !== deskState.generation) return; if(response.status === 401){ setProfileControls(false); summary.textContent="Sign in to view or manage profile-linked data. Anonymous contributions remain aggregated."; return; } if(!response.ok) throw new Error(data.error || "Privacy controls are unavailable."); setProfileControls(true,data); }catch(error){ if(generation !== deskState.generation) return; setProfileControls(false); summary.textContent=error.message || "Privacy controls are unavailable."; }
+  try{
+    const {response,data}=await boundedAccountRequest("/api/profile/privacy",{headers:{accept:"application/json"}},true);
+    if(generation !== deskState.generation || requestId !== deskState.profileRequestId) return;
+    if(response.status === 401){ summary.textContent="Sign in to view or manage profile-linked data. Anonymous contributions remain aggregated."; return; }
+    if(!response.ok) throw new Error("Privacy controls are unavailable.");
+    if(!data?.controls || typeof data.controls.limitSensitive !== "boolean" || !data.dataSummary) throw new Error("Privacy controls are unavailable.");
+    setProfileControls(true,data);
+  }catch(error){
+    if(generation !== deskState.generation || requestId !== deskState.profileRequestId) return;
+    setProfileControls(false); summary.textContent=error.message || "Privacy controls are unavailable.";
+  }
 }
 async function savePrivacyPreferences(){
   const summary=document.getElementById("profileDataSummary"); summary.textContent="Saving privacy preferences…";

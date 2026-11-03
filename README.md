@@ -187,3 +187,5 @@ Desk outages block edits and hide stale saved flags until revalidation succeeds.
 Within each tab, only the newest desk read can update saved state. Desk writes run one at a time, and reads requested during a write coalesce into a refresh after it settles. This does not serialize writes across tabs or devices.
 
 Desk requests have a 12-second client deadline, including JSON body parsing for reads. A timed-out write has an unknown server outcome: edits pause until revalidation, and the app never automatically replays that write. Aborting the client request does not undo a server-side write.
+
+Profile privacy reads share the 12-second deadline through JSON parsing. Timed-out reads leave controls disabled, release the cross-tab refresh guard, and permit a later refresh. Older reads cannot replace newer results. Profile writes and exports are outside this deadline change.
