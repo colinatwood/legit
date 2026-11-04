@@ -189,3 +189,5 @@ Within each tab, only the newest desk read can update saved state. Desk writes r
 Desk requests have a 12-second client deadline, including JSON body parsing for reads. A timed-out write has an unknown server outcome: edits pause until revalidation, and the app never automatically replays that write. Aborting the client request does not undo a server-side write.
 
 Profile privacy reads share the 12-second deadline through JSON parsing. Timed-out reads leave controls disabled, release the cross-tab refresh guard, and permit a later refresh. Older reads cannot replace newer results. Profile writes and exports are outside this deadline change.
+
+Profile exports have a 12-second deadline through JSON parsing, reject duplicate in-flight requests, and discard responses after profile refresh/deletion invalidation. Export failures release the busy state without overriding disabled profile controls. Download object URLs are revoked even if link creation/click fails. Export schema and server-side privacy filtering remain unchanged.

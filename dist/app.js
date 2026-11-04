@@ -324,7 +324,7 @@ async function boundedAccountRequest(path,options,readBody=false){
   const controller=new AbortController();
   let timer;
   const deadline=new Promise((_,reject) => {
-    timer=setTimeout(() => { const error=new Error(path === "/api/desk" ? "Saved-story request timed out." : "Profile read timed out. Reopen your profile to retry."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
+    timer=setTimeout(() => { const error=new Error(path === "/api/desk" ? "Saved-story request timed out." : path === "/api/profile/privacy/export" ? "Data export timed out. Try again when your connection recovers." : "Profile read timed out. Reopen your profile to retry."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
   });
   try{
     return await Promise.race([deadline,(async () => {
@@ -380,9 +380,11 @@ function runAction(action){
 }
 function resetComposer(){ document.getElementById("composerForm").reset(); document.getElementById("identityField").hidden=true; document.getElementById("anonymousToggle").checked=true; document.getElementById("sensitiveToggle").checked=false; }
 function setProfileControls(enabled,profile){
+  deskState.profileEnabled=enabled;
   const status=document.getElementById("profileAuthStatus"); const optOut=document.getElementById("profileOptOutSharing"); const limit=document.getElementById("profileLimitSensitive"); const correction=document.getElementById("correctionDetails"); const correctionButton=document.getElementById("requestCorrection"); const exportButton=document.getElementById("exportMyData"); const deleteButton=document.getElementById("deleteAllData");
   optOut.disabled=true;
   [limit,correction,correctionButton,exportButton,deleteButton].forEach(control => { control.disabled=!enabled; });
+  exportButton.disabled=!enabled || Boolean(deskState.exportPending);
   status.textContent=enabled ? "Signed in" : "Sign in to manage";
   optOut.checked=true;
   if(profile){ limit.checked=profile.controls.limitSensitive; document.getElementById("profileDataSummary").textContent=`${profile.dataSummary.happenings} profile-linked happening${profile.dataSummary.happenings === 1 ? "" : "s"} · ${profile.dataSummary.deskItems || 0} desk item${profile.dataSummary.deskItems === 1 ? "" : "s"} · ${profile.dataSummary.pending} pending review`; document.getElementById("profileReputationSummary").textContent=`${profile.dataSummary.reputationPoints || 0} Legit point${(profile.dataSummary.reputationPoints || 0) === 1 ? "" : "s"} earned · ${profile.dataSummary.confirmedReputationPoints || 0} confirmed from useful-evidence assessments · ${profile.dataSummary.heldReputationEvents || 0} held for coordination review`; } else { limit.checked=true; document.getElementById("profileReputationSummary").textContent="Sign in to view your privacy-safe reputation ledger."; }
@@ -414,8 +416,21 @@ async function submitCorrectionRequest(){
   try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"correction_request",details})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Correction request could not be submitted."); document.getElementById("correctionDetails").value=""; summary.textContent="Correction request submitted for review."; }catch(error){ summary.textContent=error.message || "Correction request could not be submitted."; }finally{ button.disabled=false; }
 }
 async function exportMyData(){
-  const button=document.getElementById("exportMyData"); button.disabled=true;
-  try{ const response=await fetch("/api/profile/privacy/export",{headers:{accept:"application/json"}}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Data export is unavailable."); const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"}); const url=URL.createObjectURL(blob); const link=document.createElement("a"); link.href=url; link.download="legit-data-export.json"; link.click(); URL.revokeObjectURL(url); showToast("Your aggregated data export is ready"); }catch(error){ showToast(error.message || "Data export is unavailable."); }finally{ button.disabled=false; }
+  const button=document.getElementById("exportMyData");
+  if(button.disabled || deskState.exportPending) return;
+  const generation=deskState.generation; const profileRequestId=deskState.profileRequestId;
+  deskState.exportPending=true; button.disabled=true;
+  try{
+    const {response,data}=await boundedAccountRequest("/api/profile/privacy/export",{headers:{accept:"application/json"}},true);
+    if(generation !== deskState.generation || profileRequestId !== deskState.profileRequestId || !deskState.profileEnabled) return;
+    if(!response.ok) throw new Error("Data export is unavailable.");
+    if(data?.storageModel !== "sanitized-with-neighborhood-aggregation" || !["happenings","claims","evidence","privacyRequests","reputationEvents","deskItems"].every(key => Array.isArray(data[key]))) throw new Error("Data export is unavailable.");
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"}); const url=URL.createObjectURL(blob);
+    try{ const link=document.createElement("a"); link.href=url; link.download="legit-data-export.json"; link.click(); }
+    finally{ URL.revokeObjectURL(url); }
+    showToast("Your aggregated data export is ready");
+  }catch(error){ if(generation === deskState.generation && profileRequestId === deskState.profileRequestId) showToast(error.message || "Data export is unavailable."); }
+  finally{ deskState.exportPending=false; button.disabled=!deskState.profileEnabled; }
 }
 async function deleteAllProfileData(){
   if(deskState.pending || deskState.deleting){ showToast("Please wait for the desk update to finish"); return; }
