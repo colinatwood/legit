@@ -324,7 +324,7 @@ async function boundedAccountRequest(path,options,readBody=false){
   const controller=new AbortController();
   let timer;
   const deadline=new Promise((_,reject) => {
-    timer=setTimeout(() => { const error=new Error(path === "/api/desk" ? "Saved-story request timed out." : path === "/api/profile/privacy/export" ? "Data export timed out. Try again when your connection recovers." : "Profile read timed out. Reopen your profile to retry."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
+    timer=setTimeout(() => { const error=new Error(path === "/api/profile/privacy" && options.method === "POST" ? "Profile update timed out; outcome unknown." : path === "/api/desk" ? "Saved-story request timed out." : path === "/api/profile/privacy/export" ? "Data export timed out. Try again when your connection recovers." : "Profile read timed out. Reopen your profile to retry."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
   });
   try{
     return await Promise.race([deadline,(async () => {
@@ -385,9 +385,13 @@ function setProfileControls(enabled,profile){
   optOut.disabled=true;
   [limit,correction,correctionButton,exportButton,deleteButton].forEach(control => { control.disabled=!enabled; });
   exportButton.disabled=!enabled || Boolean(deskState.exportPending);
+  applyProfileMutationBusy();
   status.textContent=enabled ? "Signed in" : "Sign in to manage";
   optOut.checked=true;
   if(profile){ limit.checked=profile.controls.limitSensitive; document.getElementById("profileDataSummary").textContent=`${profile.dataSummary.happenings} profile-linked happening${profile.dataSummary.happenings === 1 ? "" : "s"} · ${profile.dataSummary.deskItems || 0} desk item${profile.dataSummary.deskItems === 1 ? "" : "s"} · ${profile.dataSummary.pending} pending review`; document.getElementById("profileReputationSummary").textContent=`${profile.dataSummary.reputationPoints || 0} Legit point${(profile.dataSummary.reputationPoints || 0) === 1 ? "" : "s"} earned · ${profile.dataSummary.confirmedReputationPoints || 0} confirmed from useful-evidence assessments · ${profile.dataSummary.heldReputationEvents || 0} held for coordination review`; } else { limit.checked=true; document.getElementById("profileReputationSummary").textContent="Sign in to view your privacy-safe reputation ledger."; }
+}
+function applyProfileMutationBusy(){
+  for(const id of ["profileLimitSensitive","correctionDetails","requestCorrection","deleteAllData"]){ document.getElementById(id).disabled=!deskState.profileEnabled || Boolean(deskState.profileWritePending); }
 }
 async function loadPrivacyProfile(){
   const generation=deskState.generation;
@@ -406,14 +410,31 @@ async function loadPrivacyProfile(){
     setProfileControls(false); summary.textContent=error.message || "Privacy controls are unavailable.";
   }
 }
+async function submitProfileUpdate(input){
+  if(!deskState.profileEnabled || deskState.profileWritePending || deskState.deleting) return;
+  const generation=deskState.generation; const profileRequestId=deskState.profileRequestId;
+  const current=() => generation === deskState.generation && profileRequestId === deskState.profileRequestId && deskState.profileEnabled;
+  const summary=document.getElementById("profileDataSummary");
+  const correction=input.action === "correction_request";
+  deskState.profileWritePending=true; applyProfileMutationBusy();
+  summary.textContent=correction ? "Submitting correction request…" : "Saving privacy preferences…";
+  try{
+    const {response,data}=await boundedAccountRequest("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)},true);
+    if(!current()) return;
+    if(!response.ok){ const error=new Error("Profile update was rejected. Reopen your profile before trying again."); error.rejected=response.status < 500; throw error; }
+    if(data?.ok !== true || (correction ? data.request?.status !== "pending" : typeof data.controls?.limitSensitive !== "boolean")) throw new Error("Invalid profile update response.");
+    if(correction && document.getElementById("correctionDetails").value.trim() === input.details) document.getElementById("correctionDetails").value="";
+    summary.textContent=correction ? "Correction request submitted for review." : "Privacy preferences saved. Aggregated storage remains always on.";
+  }catch(error){
+    if(current()) summary.textContent=error.rejected ? error.message : "Profile update outcome is unknown. It may have been saved. Reopen your profile or download your data to check before submitting again. No automatic retry was sent.";
+  }finally{ deskState.profileWritePending=false; applyProfileMutationBusy(); }
+}
 async function savePrivacyPreferences(){
-  const summary=document.getElementById("profileDataSummary"); summary.textContent="Saving privacy preferences…";
-  try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"save_preferences",optOutSharing:document.getElementById("profileOptOutSharing").checked,limitSensitive:document.getElementById("profileLimitSensitive").checked})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Privacy preferences could not be saved."); summary.textContent="Privacy preferences saved. Aggregated storage remains always on."; }catch(error){ summary.textContent=error.message || "Privacy preferences could not be saved."; }
+  await submitProfileUpdate({action:"save_preferences",optOutSharing:document.getElementById("profileOptOutSharing").checked,limitSensitive:document.getElementById("profileLimitSensitive").checked});
 }
 async function submitCorrectionRequest(){
   const details=document.getElementById("correctionDetails").value.trim(); if(!details){ showToast("Describe what should be corrected first"); return; }
-  const button=document.getElementById("requestCorrection"); const summary=document.getElementById("profileDataSummary"); button.disabled=true; summary.textContent="Submitting correction request…";
-  try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"correction_request",details})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Correction request could not be submitted."); document.getElementById("correctionDetails").value=""; summary.textContent="Correction request submitted for review."; }catch(error){ summary.textContent=error.message || "Correction request could not be submitted."; }finally{ button.disabled=false; }
+  await submitProfileUpdate({action:"correction_request",details});
 }
 async function exportMyData(){
   const button=document.getElementById("exportMyData");
@@ -433,7 +454,7 @@ async function exportMyData(){
   finally{ deskState.exportPending=false; button.disabled=!deskState.profileEnabled; }
 }
 async function deleteAllProfileData(){
-  if(deskState.pending || deskState.deleting){ showToast("Please wait for the desk update to finish"); return; }
+  if(deskState.pending || deskState.deleting || deskState.profileWritePending){ showToast("Please wait for the pending update to finish"); return; }
   if(!window.confirm("Delete all data linked to this signed-in profile? This removes your profile-linked happenings, evidence, and privacy preferences. Anonymous aggregated reports are not linked to this profile.")) return;
   const button=document.getElementById("deleteAllData"); const summary=document.getElementById("profileDataSummary"); deskState.deleting=true; button.disabled=true; summary.textContent="Deleting profile-linked data…";
   try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"delete_all"})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Profile data could not be deleted."); deskState.generation++; deskState.server=true; deskState.available=true; deskState.keys.clear(); applyDeskState(); document.getElementById("correctionDetails").value=""; setProfileControls(true,{controls:{optOutSharing:true,limitSensitive:true},dataSummary:{happenings:0,pending:0,reputationEvents:0}}); summary.textContent=`Deleted ${data.deletion?.deletedHappenings || 0} profile-linked happening${data.deletion?.deletedHappenings === 1 ? "" : "s"} and ${data.deletion?.deletedReputationEvents || 0} reputation event${data.deletion?.deletedReputationEvents === 1 ? "" : "s"}.`; notifyProfileChange(); showToast("All profile-linked data was deleted"); }catch(error){ summary.textContent=error.message || "Profile data could not be deleted."; button.disabled=false; }finally{ deskState.deleting=false; }

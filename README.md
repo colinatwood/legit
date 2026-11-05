@@ -191,3 +191,5 @@ Desk requests have a 12-second client deadline, including JSON body parsing for 
 Profile privacy reads share the 12-second deadline through JSON parsing. Timed-out reads leave controls disabled, release the cross-tab refresh guard, and permit a later refresh. Older reads cannot replace newer results. Profile writes and exports are outside this deadline change.
 
 Profile exports have a 12-second deadline through JSON parsing, reject duplicate in-flight requests, and discard responses after profile refresh/deletion invalidation. Export failures release the busy state without overriding disabled profile controls. Download object URLs are revoked even if link creation/click fails. Export schema and server-side privacy filtering remain unchanged.
+
+Privacy-preference and correction submissions have a 12-second deadline through JSON parsing and share a per-tab write guard. Unknown outcomes preserve correction drafts and never automatically retry; users should check profile data/export before resubmitting. Late results cannot overwrite revalidated profile state. Profile deletion is blocked while these writes are pending; deletion itself is unchanged.
