@@ -620,8 +620,12 @@ async function saveCorrectionRequest(env,request,input){
   await ensurePrivacySchema(env);
   const details = requireText(input.details,"A correction request",1000);
   const createdAt = new Date().toISOString();
-  await env.DB.prepare("INSERT INTO privacy_requests (id,owner_key,request_type,details,status,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),key,"correction",details,"pending",createdAt).run();
-  return {status:"pending",createdAt};
+  // One atomic write checks for an identical pending correction under this owner.
+  // Keep resolved/history rows intact; no client-supplied owner can select the scope.
+  await env.DB.prepare("INSERT INTO privacy_requests (id,owner_key,request_type,details,status,created_at) SELECT ?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM privacy_requests WHERE owner_key=? AND request_type='correction' AND details=? AND status='pending')").bind(crypto.randomUUID(),key,"correction",details,"pending",createdAt,key,details).run();
+  const pending = await env.DB.prepare("SELECT created_at FROM privacy_requests WHERE owner_key=? AND request_type='correction' AND details=? AND status='pending' ORDER BY created_at ASC,id ASC LIMIT 1").bind(key,details).first();
+  if(!pending) throw new Error("Correction status changed. Check your profile data before submitting again.");
+  return {status:"pending",createdAt:pending.created_at};
 }
 async function deleteAllProfileData(env,request){
   const key = await ownerKey(env,request);
