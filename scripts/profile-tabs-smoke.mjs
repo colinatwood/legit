@@ -37,7 +37,7 @@ assert.equal(fallback.run('deskState.keys.size'),0);
 const count=fallback.calls();fallback.run('deskState.deleting=true');await fallback.listeners.focus();assert.equal(fallback.calls(),count);
 // Failed deletion must not notify other tabs.
 a.context.fetch=async()=>new Response('{"error":"denied"}',{status:403});await a.run('deleteAllProfileData()');assert.equal(messages.length,1);
-a.context.fetch=async()=>new Response(JSON.stringify({deletion:{deletedHappenings:1}}));await a.run('deleteAllProfileData()');assert.equal(messages.length,2,'successful deletion notifies peer tabs');
+a.context.fetch=async()=>new Response(JSON.stringify({ok:true,deletion:{deletedHappenings:1,deletedReputationEvents:0}}));await a.run('deleteAllProfileData()');assert.equal(messages.length,2,'successful deletion notifies peer tabs');
 // Outages and malformed responses never become anonymous local-save mode.
 const outage=tab();let writes=0;
 outage.context.localStorage={getItem:()=> '["anonymous-old"]',setItem:()=>{writes++;}};

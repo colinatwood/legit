@@ -338,6 +338,7 @@ function readLocalDesk(){ try{ const saved=JSON.parse(localStorage.getItem(deskS
 function saveLocalDesk(){ try{ localStorage.setItem(deskStorageKey,JSON.stringify([...deskState.keys])); }catch{} }
 function applyDeskState(){ happenings.forEach(item => { item.saved=deskState.keys.has(deskKey(item)); }); }
 async function loadDesk(){
+  if(deskState.deleting) return;
   const requestId=deskState.requestId=(deskState.requestId || 0)+1;
   if(deskState.pending){ deskState.reload=true; deskState.available=false; return; }
   const localKeys=readLocalDesk(); const generation=deskState.generation;
@@ -394,6 +395,7 @@ function applyProfileMutationBusy(){
   for(const id of ["profileLimitSensitive","correctionDetails","requestCorrection","deleteAllData"]){ document.getElementById(id).disabled=!deskState.profileEnabled || Boolean(deskState.profileWritePending); }
 }
 async function loadPrivacyProfile(){
+  if(deskState.deleting) return;
   const generation=deskState.generation;
   const requestId=deskState.profileRequestId=(deskState.profileRequestId || 0)+1;
   setProfileControls(false);
@@ -455,9 +457,28 @@ async function exportMyData(){
 }
 async function deleteAllProfileData(){
   if(deskState.pending || deskState.deleting || deskState.profileWritePending){ showToast("Please wait for the pending update to finish"); return; }
+  if(deskState.profileEnabled === false) return;
   if(!window.confirm("Delete all data linked to this signed-in profile? This removes your profile-linked happenings, evidence, and privacy preferences. Anonymous aggregated reports are not linked to this profile.")) return;
-  const button=document.getElementById("deleteAllData"); const summary=document.getElementById("profileDataSummary"); deskState.deleting=true; button.disabled=true; summary.textContent="Deleting profile-linked data…";
-  try{ const response=await fetch("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"delete_all"})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Profile data could not be deleted."); deskState.generation++; deskState.server=true; deskState.available=true; deskState.keys.clear(); applyDeskState(); document.getElementById("correctionDetails").value=""; setProfileControls(true,{controls:{optOutSharing:true,limitSensitive:true},dataSummary:{happenings:0,pending:0,reputationEvents:0}}); summary.textContent=`Deleted ${data.deletion?.deletedHappenings || 0} profile-linked happening${data.deletion?.deletedHappenings === 1 ? "" : "s"} and ${data.deletion?.deletedReputationEvents || 0} reputation event${data.deletion?.deletedReputationEvents === 1 ? "" : "s"}.`; notifyProfileChange(); showToast("All profile-linked data was deleted"); }catch(error){ summary.textContent=error.message || "Profile data could not be deleted."; button.disabled=false; }finally{ deskState.deleting=false; }
+  const previouslyEnabled=deskState.profileEnabled !== false;
+  const summary=document.getElementById("profileDataSummary");
+  deskState.deleting=true; deskState.generation++; setProfileControls(false); summary.textContent="Deleting profile-linked data…";
+  try{
+    const {response,data}=await boundedAccountRequest("/api/profile/privacy",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"delete_all"})},true);
+    if(!response.ok){ const error=new Error("Deletion request was rejected. Reopen your profile to check before trying again."); error.rejected=response.status < 500; throw error; }
+    if(data?.ok !== true || ![data.deletion?.deletedHappenings,data.deletion?.deletedReputationEvents].every(value => Number.isSafeInteger(value) && value >= 0)) throw new Error("Invalid deletion response.");
+    deskState.server=true; deskState.available=true; deskState.keys.clear(); applyDeskState(); document.getElementById("correctionDetails").value="";
+    setProfileControls(true,{controls:{optOutSharing:true,limitSensitive:true},dataSummary:{happenings:0,pending:0,reputationEvents:0}});
+    summary.textContent=`Deleted ${data.deletion.deletedHappenings} profile-linked happening${data.deletion.deletedHappenings === 1 ? "" : "s"} and ${data.deletion.deletedReputationEvents} reputation event${data.deletion.deletedReputationEvents === 1 ? "" : "s"}.`;
+    notifyProfileChange(); showToast("All profile-linked data was deleted");
+  }catch(error){
+    if(error.rejected){ setProfileControls(previouslyEnabled); summary.textContent=error.message; }
+    else{
+      deskState.generation++; deskState.available=false;
+      if(deskState.server){ deskState.keys.clear(); applyDeskState(); }
+      setProfileControls(false);
+      summary.textContent="Deletion outcome is unknown. The server may have deleted your data. Reopen your profile to check before making another deletion request. No automatic retry was sent.";
+    }
+  }finally{ deskState.deleting=false; }
 }
 
 // Cross-tab messages are invalidations only: never send identity or profile content.

@@ -13,7 +13,7 @@ vm.runInContext(app.slice(app.indexOf('function deskKey('),app.indexOf('async fu
 vm.runInContext(app.slice(app.indexOf('function setProfileControls('),app.indexOf('async function loadPrivacyProfile(')),context);
 vm.runInContext(app.slice(app.indexOf('async function deleteAllProfileData('),app.indexOf('document.getElementById("openMethodology")')),context);
 const run=code=>vm.runInContext(code,context);
-let finishDesk; context.fetch=async url=>url==='/api/desk' ? new Promise(resolve=>{finishDesk=resolve;}) : new Response(JSON.stringify({deletion:{deletedHappenings:1,deletedReputationEvents:2}}));
+let finishDesk; context.fetch=async url=>url==='/api/desk' ? new Promise(resolve=>{finishDesk=resolve;}) : new Response(JSON.stringify({ok:true,deletion:{deletedHappenings:1,deletedReputationEvents:2}}));
 const pending=run('loadDesk()');
 document.getElementById('correctionDetails').value='sensitive draft';
 await run('deleteAllProfileData()');
@@ -25,7 +25,7 @@ assert.equal(run('deskState.keys.size'),0,'stale desk response must not restore 
 assert.match(document.getElementById('profileDataSummary').textContent,/Deleted 1 profile-linked happening/);
 run('deskState.keys.add("unchanged");');context.fetch=async()=>new Response('{"error":"denied"}',{status:403});await run('deleteAllProfileData()');
 assert.equal(run('deskState.keys.has("unchanged")'),true,'failed deletion preserves state');
-assert.equal(document.getElementById('profileDataSummary').textContent,'denied');
+assert.match(document.getElementById('profileDataSummary').textContent,/rejected/);
 run('deskState.pending=1'); let calls=0; context.fetch=async()=>{calls++; return new Response('{}');};
 await run('deleteAllProfileData()'); assert.equal(calls,0,'deletion must wait for a desk write');
 run('deskState.pending=0; deskState.deleting=true'); await run('toggleDesk(happenings[0])');
