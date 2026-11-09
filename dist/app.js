@@ -16,6 +16,8 @@ const miniCard = document.getElementById("miniCard");
 const actionMenu = document.getElementById("actionMenu");
 let map;
 let selectedHappening = null;
+let reportDraftVersion=0;
+let reportSubmissionPending=false;
 let mapMarkers = [];
 let postCounter = 0;
 let publicLoadController = null;
@@ -312,7 +314,7 @@ function populateDetail(item){
 }
 function openFull(item){ selectedHappening=item; closeActions(); miniCard.hidden=true; populateDetail(item); showModal("detailModal"); }
 function selectReportReason(value){ const reason=document.getElementById("reportReason"); reason.value=value; reason.dispatchEvent(new Event("change")); }
-function openReport(item){ selectedHappening=item; closeActions(); miniCard.hidden=true; document.getElementById("reportTitle").textContent=`Report or correct: ${item.title}`; document.getElementById("reportDetails").value=""; selectReportReason("correction"); if(document.getElementById("evidenceSource")) document.getElementById("evidenceSource").value=""; showModal("reportModal"); }
+function openReport(item){ reportDraftVersion++; selectedHappening=item; closeActions(); miniCard.hidden=true; document.getElementById("reportTitle").textContent=`Report or correct: ${item.title}`; document.getElementById("reportDetails").value=""; selectReportReason("correction"); if(document.getElementById("evidenceSource")) document.getElementById("evidenceSource").value=""; showModal("reportModal"); }
 async function recordEvidenceAssessment(item,button){
   if(button.disabled) return; button.disabled=true;
   const evidenceId=button.dataset.evidenceId || item.evidence[0]?.id; if(!evidenceId){ showToast("No evidence trail to upvote yet"); button.disabled=false; return; }
@@ -324,7 +326,7 @@ async function boundedAccountRequest(path,options,readBody=false){
   const controller=new AbortController();
   let timer;
   const deadline=new Promise((_,reject) => {
-    timer=setTimeout(() => { const error=new Error(path === "/api/profile/privacy" && options.method === "POST" ? "Profile update timed out; outcome unknown." : path === "/api/desk" ? "Saved-story request timed out." : path === "/api/profile/privacy/export" ? "Data export timed out. Try again when your connection recovers." : "Profile read timed out. Reopen your profile to retry."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
+    timer=setTimeout(() => { const error=new Error(path === "/api/reports" ? "Review submission timed out; outcome unknown." : path === "/api/profile/privacy" && options.method === "POST" ? "Profile update timed out; outcome unknown." : path === "/api/desk" ? "Saved-story request timed out." : path === "/api/profile/privacy/export" ? "Data export timed out. Try again when your connection recovers." : "Profile read timed out. Reopen your profile to retry."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
   });
   try{
     return await Promise.race([deadline,(async () => {
@@ -364,11 +366,21 @@ async function toggleDesk(item){
 }
 async function submitReport(event){
   event.preventDefault();
+  if(reportSubmissionPending) return;
   const details=document.getElementById("reportDetails").value.trim(); if(!details){ showToast("Add details for reviewers first"); return; }
-  const submit=event.currentTarget.querySelector('button[type="submit"]'); submit.disabled=true; submit.textContent="Sending…";
-  try{ const response=await fetch("/api/reports",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({targetType:"happening",targetId:selectedHappening?.id,reason:document.getElementById("reportReason").value,details,source:document.getElementById("evidenceSource")?.value.trim() || ""})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Report could not be submitted."); closeModal("reportModal"); showToast(data.report?.message || "Submitted for review"); }
-  catch(error){ showToast(error.message || "Report could not be submitted."); }
-  finally{ submit.disabled=false; submit.textContent="Send for review"; }
+  const targetId=selectedHappening?.id; if(targetId == null){ showToast("Open a signal before submitting a review request"); return; }
+  const draftVersion=reportDraftVersion;
+  const input={targetType:"happening",targetId,reason:document.getElementById("reportReason").value,details,source:document.getElementById("evidenceSource")?.value.trim() || ""};
+  const unchanged=() => draftVersion === reportDraftVersion && selectedHappening?.id === targetId && document.getElementById("reportDetails").value.trim() === input.details && document.getElementById("reportReason").value === input.reason && (document.getElementById("evidenceSource")?.value.trim() || "") === input.source;
+  const submit=event.currentTarget.querySelector('button[type="submit"]'); reportSubmissionPending=true; submit.disabled=true; submit.textContent="Sending…";
+  try{
+    const {response,data}=await boundedAccountRequest("/api/reports",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)},true);
+    if(!response.ok){ const error=new Error("Review submission was rejected. Your draft is kept; check it before trying again."); error.rejected=response.status < 500; throw error; }
+    if(data?.ok !== true || data.report?.reviewState !== "pending") throw new Error("Invalid review response.");
+    if(unchanged()){ closeModal("reportModal"); showToast("Submitted for review. No identity or exact location is made public."); }
+    else showToast("Earlier submission queued for review. Your current draft is kept.");
+  }catch(error){ showToast(error.rejected ? error.message : "Review submission outcome is unknown. It may have reached reviewers. Your current draft is kept; check before submitting again. No automatic retry was sent."); }
+  finally{ reportSubmissionPending=false; submit.disabled=false; submit.textContent="Send for review"; }
 }
 function runAction(action){
   if(!selectedHappening) return; const item=selectedHappening; closeActions();
