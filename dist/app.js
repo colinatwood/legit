@@ -18,6 +18,7 @@ let map;
 let selectedHappening = null;
 let reportDraftVersion=0;
 let reportSubmissionPending=false;
+const assessmentRequests=new Set();
 let mapMarkers = [];
 let composerDraftVersion=0;
 let signalSubmissionPending=false;
@@ -317,9 +318,28 @@ function openFull(item){ selectedHappening=item; closeActions(); miniCard.hidden
 function selectReportReason(value){ const reason=document.getElementById("reportReason"); reason.value=value; reason.dispatchEvent(new Event("change")); }
 function openReport(item){ reportDraftVersion++; selectedHappening=item; closeActions(); miniCard.hidden=true; document.getElementById("reportTitle").textContent=`Report or correct: ${item.title}`; document.getElementById("reportDetails").value=""; selectReportReason("correction"); if(document.getElementById("evidenceSource")) document.getElementById("evidenceSource").value=""; showModal("reportModal"); }
 async function recordEvidenceAssessment(item,button){
-  if(button.disabled) return; button.disabled=true;
-  const evidenceId=button.dataset.evidenceId || item.evidence[0]?.id; if(!evidenceId){ showToast("No evidence trail to upvote yet"); button.disabled=false; return; }
-  try{ const response=await fetch("/api/reputation/assessment",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({targetId:`${item.id}:${evidenceId}`,actionType:"evidence_useful"})}); const data=await response.json().catch(() => ({})); if(!response.ok) throw new Error(data.error || "Useful evidence could not be recorded."); const assessment=data.assessment || {}; if(assessment.accepted) userState.points += assessment.pointsAwarded || 0; const held=assessment.riskState === "coordination_review"; button.textContent=assessment.accepted ? (held ? "✓ held for review" : "✓ counted") : "already counted"; showToast(assessment.accepted ? (held ? "Useful evidence recorded; points are held for coordination review" : `Useful evidence added · +${assessment.pointsAwarded} point${assessment.pointsAwarded === 1 ? "" : "s"}`) : (assessment.reason || "This assessment was already counted")); }catch(error){ button.disabled=false; showToast(error.message || "Useful evidence could not be recorded."); }
+  if(button.disabled) return;
+  const evidenceId=button.dataset.evidenceId || item.evidence[0]?.id;
+  if(!evidenceId){ showToast("No evidence trail to upvote yet"); return; }
+  const targetId=`${item.id}:${evidenceId}`;
+  if(assessmentRequests.has(targetId)){ showToast("This evidence assessment is still pending"); return; }
+  const generation=deskState.generation;
+  const sameButton=() => !button.dataset.evidenceId || button.dataset.evidenceId === evidenceId;
+  assessmentRequests.add(targetId); button.disabled=true;
+  try{
+    const {response,data}=await boundedAccountRequest("/api/reputation/assessment",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({targetId,actionType:"evidence_useful"})},true);
+    if(!response.ok){ const error=new Error("Evidence assessment was rejected. No points were confirmed."); error.rejected=response.status < 500; throw error; }
+    const assessment=data?.assessment;
+    if(data?.ok !== true || typeof assessment?.accepted !== "boolean" || !Number.isSafeInteger(assessment.pointsAwarded) || assessment.pointsAwarded < 0 || (assessment.accepted ? !["normal","coordination_review"].includes(assessment.riskState) : assessment.pointsAwarded !== 0) || (assessment.riskState === "coordination_review" && assessment.pointsAwarded !== 0)) throw new Error("Invalid assessment response.");
+    const held=assessment.riskState === "coordination_review";
+    const current=generation === deskState.generation;
+    if(assessment.accepted && !held && current) userState.points += assessment.pointsAwarded;
+    if(sameButton()) button.textContent=assessment.accepted ? (held ? "✓ held for review" : "✓ counted") : (/^Already counted/.test(assessment.reason || "") ? "already counted" : "not counted");
+    showToast(assessment.accepted ? (held ? "Useful evidence recorded; points are held for coordination review" : current ? `Useful evidence confirmed · +${assessment.pointsAwarded} point${assessment.pointsAwarded === 1 ? "" : "s"}` : "Evidence assessment recorded. Reopen your profile for current points.") : (assessment.reason || "Assessment not accepted; no points awarded"));
+  }catch(error){
+    if(sameButton()){ button.disabled=false; button.textContent=error.rejected ? "↑ useful" : "status unknown"; }
+    showToast(error.rejected ? error.message : "Evidence assessment outcome is unknown. It may have been recorded. No points were confirmed here and no automatic retry was sent.");
+  }finally{ assessmentRequests.delete(targetId); }
 }
 function deskKey(item){ return item.serverId || `demo-${item.id}`; }
 // Keep the deadline active through JSON parsing, not only response headers.
@@ -327,7 +347,7 @@ async function boundedAccountRequest(path,options,readBody=false){
   const controller=new AbortController();
   let timer;
   const deadline=new Promise((_,reject) => {
-    timer=setTimeout(() => { const error=new Error(path === "/api/happenings" ? "Signal submission timed out; outcome unknown." : path === "/api/reports" ? "Review submission timed out; outcome unknown." : path === "/api/profile/privacy" && options.method === "POST" ? "Profile update timed out; outcome unknown." : path === "/api/desk" ? "Saved-story request timed out." : path === "/api/profile/privacy/export" ? "Data export timed out. Try again when your connection recovers." : "Profile read timed out. Reopen your profile to retry."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
+    timer=setTimeout(() => { const error=new Error(path === "/api/reputation/assessment" ? "Evidence assessment timed out; outcome unknown." : path === "/api/happenings" ? "Signal submission timed out; outcome unknown." : path === "/api/reports" ? "Review submission timed out; outcome unknown." : path === "/api/profile/privacy" && options.method === "POST" ? "Profile update timed out; outcome unknown." : path === "/api/desk" ? "Saved-story request timed out." : path === "/api/profile/privacy/export" ? "Data export timed out. Try again when your connection recovers." : "Profile read timed out. Reopen your profile to retry."); error.deskTimeout=true; reject(error); controller.abort(); },12000);
   });
   try{
     return await Promise.race([deadline,(async () => {
