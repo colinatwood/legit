@@ -265,28 +265,40 @@ async function persistAssessment(env,request,input){
   const fingerprint = await actorFingerprint(env,request);
   const owner = hasAuthenticatedPrincipal(request) ? await ownerKey(env,request) : null;
   const actionDay = new Date().toISOString().slice(0,10);
-  const existing = await env.DB.prepare(`SELECT id FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND target_id=? LIMIT 1`).bind(fingerprint,actionType,targetId).first();
-  if(existing) return {accepted:false,pointsAwarded:0,reason:"Already counted"};
   const storyId = assessmentStoryId(targetId);
-  if(storyId){
-    const storyExisting = await env.DB.prepare(`SELECT id FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND target_id LIKE ? LIMIT 1`).bind(fingerprint,actionType,`${storyId}:%`).first();
-    if(storyExisting) return {accepted:false,pointsAwarded:0,reason:"Already counted for this story"};
-  }
-  const countRow = await env.DB.prepare(`SELECT COUNT(*) AS total FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND action_day=?`).bind(fingerprint,actionType,actionDay).first();
-  const count = Number(countRow?.total || 0);
-  if(count >= reputationRules.dailyCap) return {accepted:false,pointsAwarded:0,reason:"Daily assessment limit reached"};
+  const storyPrefix = storyId ? `${storyId}:` : "";
   const createdAt = new Date().toISOString();
   const coordinationSince = new Date(Date.now() - reputationRules.coordinationWindowMinutes * 60 * 1000).toISOString();
-  const recent = storyId && storyId.startsWith("public-")
-    ? await env.DB.prepare(`SELECT COUNT(*) AS events, COUNT(DISTINCT actor_fingerprint) AS actors FROM reputation_events WHERE action_type=? AND target_id LIKE ? AND created_at >= ?`).bind(actionType,`${storyId}:%`,coordinationSince).first()
-    : null;
-  const coordinationReview = Boolean(recent && Number(recent.events || 0) + 1 >= reputationRules.coordinationMinAssessments && Number(recent.actors || 0) + 1 >= reputationRules.coordinationMinActors);
-  const pointsAwarded = coordinationReview ? 0 : Math.max(1,Math.floor(reputationRules.evidenceUseful.base / Math.pow(reputationRules.evidenceUseful.decay,count)));
-  const basis = coordinationReview
-    ? "Useful evidence recorded; points held for coordination review."
-    : "Useful evidence assessment; duplicate, story, daily-cap, and coordination checks passed.";
-  await env.DB.prepare(`INSERT INTO reputation_events (id,actor_fingerprint,action_type,target_id,action_day,points_awarded,basis,risk_state,created_at,owner_key) VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),fingerprint,actionType,targetId,actionDay,pointsAwarded,basis,coordinationReview ? "coordination_review" : "normal",createdAt,owner).run();
-  return {accepted:true,pointsAwarded,riskState:coordinationReview ? "coordination_review" : "normal",basis:"Evidence usefulness, not claim agreement"};
+  // All eligibility checks and scoring read the same SQLite write statement snapshot.
+  // No preflight read can authorize a later write using stale limits or burst counts.
+  const scoreCases = Array.from({length:reputationRules.dailyCap},(_,count) =>
+    `WHEN ${count} THEN ${Math.max(1,Math.floor(reputationRules.evidenceUseful.base / Math.pow(reputationRules.evidenceUseful.decay,count)))}`).join(" ");
+  const recorded = await env.DB.prepare(`WITH counts AS (
+    SELECT COUNT(*) AS total FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND action_day=?
+  ), burst AS (
+    SELECT COUNT(*) AS events,COUNT(DISTINCT actor_fingerprint) AS actors FROM reputation_events
+    WHERE ? AND action_type=? AND substr(target_id,1,length(?))=? AND created_at>=?
+  ), decision AS (
+    SELECT total,(events+1>=? AND actors+1>=?) AS held FROM counts CROSS JOIN burst
+  ) INSERT INTO reputation_events (id,actor_fingerprint,action_type,target_id,action_day,points_awarded,basis,risk_state,created_at,owner_key)
+    SELECT ?,?,?,?,?,CASE WHEN held THEN 0 ELSE CASE total ${scoreCases} ELSE 1 END END,
+      CASE WHEN held THEN 'Useful evidence recorded; points held for coordination review.' ELSE 'Useful evidence assessment; duplicate, story, daily-cap, and coordination checks passed.' END,
+      CASE WHEN held THEN 'coordination_review' ELSE 'normal' END,?,?
+    FROM decision WHERE total<? AND NOT EXISTS (
+      SELECT 1 FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND
+        (target_id=? OR (? AND substr(target_id,1,length(?))=?))
+    ) RETURNING points_awarded,risk_state`).bind(
+      fingerprint,actionType,actionDay,
+      storyId?.startsWith("public-") ? 1 : 0,actionType,storyPrefix,storyPrefix,coordinationSince,
+      reputationRules.coordinationMinAssessments,reputationRules.coordinationMinActors,
+      crypto.randomUUID(),fingerprint,actionType,targetId,actionDay,createdAt,owner,
+      reputationRules.dailyCap,fingerprint,actionType,targetId,storyId ? 1 : 0,storyPrefix,storyPrefix
+    ).first();
+  if(!recorded){
+    const existing = await env.DB.prepare(`SELECT target_id FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND (target_id=? OR (? AND substr(target_id,1,length(?))=?)) LIMIT 1`).bind(fingerprint,actionType,targetId,storyId ? 1 : 0,storyPrefix,storyPrefix).first();
+    return {accepted:false,pointsAwarded:0,reason:existing ? (existing.target_id===targetId ? "Already counted" : "Already counted for this story") : "Daily assessment limit reached"};
+  }
+  return {accepted:true,pointsAwarded:Number(recorded.points_awarded),riskState:recorded.risk_state,basis:"Evidence usefulness, not claim agreement"};
 }
 async function moderationStatus(env){
   if(!env.DB) throw new Error("Durable moderation storage is unavailable.");

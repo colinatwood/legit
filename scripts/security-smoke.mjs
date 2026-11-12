@@ -94,23 +94,11 @@ assert.equal(emailDeskRead.status,200);
 const bodyIdentity = await request("/api/profile/privacy",{method:"POST",headers:{origin,"content-type":"application/json"},body:JSON.stringify({action:"save_preferences","oai-authenticated-user-id":"body-supplied-user"})});
 assert.equal(bodyIdentity.status,401);
 
-const reputationRows = [
-  {id:"r-1",actor_fingerprint:"actor-1",action_type:"evidence_useful",target_id:"public-story:e1",action_day:now.slice(0,10),points_awarded:2,risk_state:"normal",created_at:now},
-  {id:"r-2",actor_fingerprint:"actor-2",action_type:"evidence_useful",target_id:"public-story:e2",action_day:now.slice(0,10),points_awarded:2,risk_state:"normal",created_at:now},
-  {id:"r-3",actor_fingerprint:"actor-3",action_type:"evidence_useful",target_id:"public-story:e3",action_day:now.slice(0,10),points_awarded:2,risk_state:"normal",created_at:now}
-];
-const reputationDb = {
-  prepare(sql){
-    const statement = {bind(...values){statement.values=values; return statement},run:async()=>({}),first:async()=>{
-      if(sql.includes("SELECT id FROM reputation_events")) return reputationRows.find(row => row.actor_fingerprint === "actor-4" && row.target_id === statement.values?.[2]) || null;
-      if(sql.includes("COUNT(*) AS total") && sql.includes("actor_fingerprint=?")) return {total:0};
-      if(sql.includes("COUNT(*) AS events")) return {events:3,actors:3};
-      return {total:0};
-    },all:async()=>({results:[]})};
-    if(sql.startsWith("INSERT INTO reputation_events")) statement.run=async()=>({ok:true});
-    return statement;
-  }
-};
+// Response contract only; actual scoring and concurrency use migrated SQLite in assessment-sqlite-smoke.
+const reputationDb = {prepare(sql){return {bind(){return this;},async first(){
+  if(sql.includes("INSERT INTO reputation_events")) return {points_awarded:0,risk_state:"coordination_review"};
+  return null;
+}};}};
 const assessment = await requestWithEnv("/api/reputation/assessment",{method:"POST",headers:{origin,"content-type":"application/json","CF-Connecting-IP":"actor-4","user-agent":"smoke"},body:JSON.stringify({targetId:"public-story:e4",actionType:"evidence_useful"})},{DB:reputationDb,LEGIT_OWNER_HMAC_SECRET:"owner-smoke-secret",LEGIT_ABUSE_HMAC_SECRET:"abuse-smoke-secret"});
 assert.equal(assessment.status,202);
 assert.equal((await assessment.json()).assessment.riskState,"coordination_review");
