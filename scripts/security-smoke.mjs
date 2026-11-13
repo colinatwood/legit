@@ -96,10 +96,11 @@ assert.equal(bodyIdentity.status,401);
 
 // Response contract only; actual scoring and concurrency use migrated SQLite in assessment-sqlite-smoke.
 const reputationDb = {prepare(sql){return {bind(){return this;},async first(){
+  if(sql.includes("SELECT h.id,h.title,h.topic,h.public_location")) return mockRows[0];
   if(sql.includes("INSERT INTO reputation_events")) return {points_awarded:0,risk_state:"coordination_review"};
   return null;
 }};}};
-const assessment = await requestWithEnv("/api/reputation/assessment",{method:"POST",headers:{origin,"content-type":"application/json","CF-Connecting-IP":"actor-4","user-agent":"smoke"},body:JSON.stringify({targetId:"public-story:e4",actionType:"evidence_useful"})},{DB:reputationDb,LEGIT_OWNER_HMAC_SECRET:"owner-smoke-secret",LEGIT_ABUSE_HMAC_SECRET:"abuse-smoke-secret"});
+const assessment = await requestWithEnv("/api/reputation/assessment",{method:"POST",headers:{origin,"content-type":"application/json","CF-Connecting-IP":"actor-4","user-agent":"smoke"},body:JSON.stringify({targetId:publicBody.happenings[0].id+":e-1",actionType:"evidence_useful"})},{DB:reputationDb,LEGIT_OWNER_HMAC_SECRET:"owner-smoke-secret",LEGIT_ABUSE_HMAC_SECRET:"abuse-smoke-secret"});
 assert.equal(assessment.status,202);
 assert.equal((await assessment.json()).assessment.riskState,"coordination_review");
 

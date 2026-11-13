@@ -257,6 +257,14 @@ function assessmentStoryId(targetId){
   const separator = targetId.indexOf(":");
   return separator > 0 ? targetId.slice(0,separator) : null;
 }
+async function assessmentEvidence(env,storyId,evidenceId){
+  if(!/^public-[a-f0-9]{24}$/.test(storyId || "") || !evidenceId) return null;
+  const row = await env.DB.prepare(`SELECT h.id,h.title,h.topic,h.public_location
+    FROM evidence e JOIN claims c ON c.id=e.claim_id JOIN happenings h ON h.id=c.happening_id
+    WHERE e.id=? AND e.review_state IN ('cleared','approved') AND e.provenance IS NOT NULL
+      AND h.review_state IN ('cleared','approved') AND h.public_lat IS NOT NULL AND h.public_lng IS NOT NULL LIMIT 1`).bind(evidenceId).first();
+  return row && `public-${await publicGroupKey(row)}` === storyId ? row : null;
+}
 async function persistAssessment(env,request,input){
   if(!env.DB) throw new Error("Durable reputation storage is unavailable.");
   const actionType = requireText(input.actionType,"An assessment type",40);
@@ -267,6 +275,9 @@ async function persistAssessment(env,request,input){
   const actionDay = new Date().toISOString().slice(0,10);
   const storyId = assessmentStoryId(targetId);
   const storyPrefix = storyId ? `${storyId}:` : "";
+  const evidenceId = storyId ? targetId.slice(storyId.length+1) : "";
+  const eligible = await assessmentEvidence(env,storyId,evidenceId);
+  if(!eligible) return {accepted:false,pointsAwarded:0,reason:"Evidence is not available for assessment"};
   const createdAt = new Date().toISOString();
   const coordinationSince = new Date(Date.now() - reputationRules.coordinationWindowMinutes * 60 * 1000).toISOString();
   // All eligibility checks and scoring read the same SQLite write statement snapshot.
@@ -284,7 +295,12 @@ async function persistAssessment(env,request,input){
     SELECT ?,?,?,?,?,CASE WHEN held THEN 0 ELSE CASE total ${scoreCases} ELSE 1 END END,
       CASE WHEN held THEN 'Useful evidence recorded; points held for coordination review.' ELSE 'Useful evidence assessment; duplicate, story, daily-cap, and coordination checks passed.' END,
       CASE WHEN held THEN 'coordination_review' ELSE 'normal' END,?,?
-    FROM decision WHERE total<? AND NOT EXISTS (
+    FROM decision WHERE total<? AND EXISTS (
+      SELECT 1 FROM evidence e JOIN claims c ON c.id=e.claim_id JOIN happenings h ON h.id=c.happening_id
+      WHERE e.id=? AND h.id=? AND h.title IS ? AND h.topic IS ? AND h.public_location IS ?
+        AND e.review_state IN ('cleared','approved') AND e.provenance IS NOT NULL
+        AND h.review_state IN ('cleared','approved') AND h.public_lat IS NOT NULL AND h.public_lng IS NOT NULL
+    ) AND NOT EXISTS (
       SELECT 1 FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND
         (target_id=? OR (? AND substr(target_id,1,length(?))=?))
     ) RETURNING points_awarded,risk_state`).bind(
@@ -292,10 +308,12 @@ async function persistAssessment(env,request,input){
       storyId?.startsWith("public-") ? 1 : 0,actionType,storyPrefix,storyPrefix,coordinationSince,
       reputationRules.coordinationMinAssessments,reputationRules.coordinationMinActors,
       crypto.randomUUID(),fingerprint,actionType,targetId,actionDay,createdAt,owner,
-      reputationRules.dailyCap,fingerprint,actionType,targetId,storyId ? 1 : 0,storyPrefix,storyPrefix
+      reputationRules.dailyCap,evidenceId,eligible.id,eligible.title,eligible.topic,eligible.public_location,
+      fingerprint,actionType,targetId,storyId ? 1 : 0,storyPrefix,storyPrefix
     ).first();
   if(!recorded){
     const existing = await env.DB.prepare(`SELECT target_id FROM reputation_events WHERE actor_fingerprint=? AND action_type=? AND (target_id=? OR (? AND substr(target_id,1,length(?))=?)) LIMIT 1`).bind(fingerprint,actionType,targetId,storyId ? 1 : 0,storyPrefix,storyPrefix).first();
+    if(!existing && !await assessmentEvidence(env,storyId,evidenceId)) return {accepted:false,pointsAwarded:0,reason:"Evidence is not available for assessment"};
     return {accepted:false,pointsAwarded:0,reason:existing ? (existing.target_id===targetId ? "Already counted" : "Already counted for this story") : "Daily assessment limit reached"};
   }
   return {accepted:true,pointsAwarded:Number(recorded.points_awarded),riskState:recorded.risk_state,basis:"Evidence usefulness, not claim agreement"};
