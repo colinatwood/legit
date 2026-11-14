@@ -373,12 +373,6 @@ async function publicHappenings(env,url){
     WHERE ${where} AND e.review_state IN ('cleared','approved') AND e.provenance IS NOT NULL ORDER BY e.submitted_at DESC LIMIT 1000`).bind(...bindings).all();
   const correctionResult = await env.DB.prepare(`SELECT public_story_id,history_type,summary,created_at
     FROM correction_history WHERE review_state='approved' ORDER BY created_at DESC LIMIT 500`).all();
-  const reputationRows = await env.DB.prepare(`SELECT substr(target_id,1,instr(target_id,':')-1) AS group_id,
-    SUM(CASE WHEN risk_state='normal' AND points_awarded > 0 THEN 1 ELSE 0 END) AS useful_evidence,
-    COUNT(DISTINCT CASE WHEN risk_state='normal' AND points_awarded > 0 THEN actor_fingerprint END) AS independent_assessors,
-    SUM(CASE WHEN risk_state='coordination_review' THEN 1 ELSE 0 END) AS coordination_reviews
-    FROM reputation_events WHERE action_type='evidence_useful' AND target_id LIKE 'public-%:%' GROUP BY group_id`).all();
-  const reputationByGroup = new Map((reputationRows.results || []).map(row => [row.group_id,{usefulEvidence:Number(row.useful_evidence || 0),independentAssessors:Number(row.independent_assessors || 0),coordinationReviews:Number(row.coordination_reviews || 0)}]));
   const grouped = new Map();
   const happeningGroupKeys = new Map();
   for(const row of result.results || []){
@@ -398,15 +392,25 @@ async function publicHappenings(env,url){
     if(existing.balance !== row.balance) existing.balance = "agnostic";
     if(String(row.created_at) > String(existing.createdAt)) existing.createdAt = row.created_at;
   }
+  const eligibleAssessmentTargets = new Set();
   for(const row of evidenceResult.results || []){
     const item = grouped.get(happeningGroupKeys.get(row.happening_id));
     if(!item) continue;
+    eligibleAssessmentTargets.add(`${item.id}:${row.id}`);
     const provenance = aggregateSource(row.provenance);
     if(provenance) item._sourceKeys.add(provenance);
     if(item._evidenceById.has(row.id)) continue;
     const relationship = String(row.relationship || "relates");
     item._evidenceById.set(row.id,{id:String(row.id),initials:"EV",title:sanitizeText(row.evidence_type || "Source trail",90),excerpt:`${relationship.charAt(0).toUpperCase()}${relationship.slice(1)} the primary claim.`,provenance:provenance || "Sanitized source trail",submittedAt:row.submitted_at});
   }
+  // Count only assessments of evidence in this public snapshot; retain the historical ledger.
+  const reputationRows = await env.DB.prepare(`SELECT substr(r.target_id,1,instr(r.target_id,':')-1) AS group_id,
+    SUM(CASE WHEN r.risk_state='normal' AND r.points_awarded > 0 THEN 1 ELSE 0 END) AS useful_evidence,
+    COUNT(DISTINCT CASE WHEN r.risk_state='normal' AND r.points_awarded > 0 THEN r.actor_fingerprint END) AS independent_assessors,
+    SUM(CASE WHEN r.risk_state='coordination_review' THEN 1 ELSE 0 END) AS coordination_reviews
+    FROM reputation_events r JOIN json_each(?) eligible ON eligible.value=r.target_id
+    WHERE r.action_type='evidence_useful' GROUP BY group_id`).bind(JSON.stringify([...eligibleAssessmentTargets])).all();
+  const reputationByGroup = new Map((reputationRows.results || []).map(row => [row.group_id,{usefulEvidence:Number(row.useful_evidence || 0),independentAssessors:Number(row.independent_assessors || 0),coordinationReviews:Number(row.coordination_reviews || 0)}]));
   for(const row of correctionResult.results || []){
     const item = [...grouped.values()].find(candidate => candidate.id === row.public_story_id);
     if(item) item.corrections.push({type:row.history_type,summary:sanitizeText(row.summary,500),createdAt:row.created_at});
